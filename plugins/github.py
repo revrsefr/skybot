@@ -9,10 +9,14 @@ API_BASE = "https://api.github.com"
 DEFAULT_POLL_INTERVAL = 60
 MAX_EVENTS_PER_POLL = 3
 MAX_COMMITS_PER_PUSH = 3
+MAX_REPOS_PER_POLL_NO_TOKEN = 4
+RATE_LIMIT_WARN_COOLDOWN = 3600
 
 _repo_re = re.compile(r"^(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)$")
 
 _last_poll_by_conn = {}
+_poll_cursor_by_conn = {}
+_last_rate_limit_warn = {}
 
 
 def _now():
@@ -189,11 +193,14 @@ def format_event(event, token=None):
 
         compare_base = before
         compare_head = head
+        # Compare API calls are expensive and will quickly burn through the
+        # unauthenticated rate limit. Only attempt them when a token is set.
         stats = None
-        try:
-            stats = _compare_stats(repo, compare_base, compare_head, token=token)
-        except Exception:
-            stats = None
+        if token:
+            try:
+                stats = _compare_stats(repo, compare_base, compare_head, token=token)
+            except Exception:
+                stats = None
 
         # If the forward compare shows no changes, try the reverse direction.
         # This happens with force-pushes / rewrites where the public Events API
@@ -211,10 +218,12 @@ def format_event(event, token=None):
                 and before
                 and head
             ):
-                try:
-                    rev = _compare_stats(repo, head, before, token=token)
-                except Exception:
-                    rev = None
+                rev = None
+                if token:
+                    try:
+                        rev = _compare_stats(repo, head, before, token=token)
+                    except Exception:
+                        rev = None
 
                 if rev:
                     r_add, r_del, r_files, r_commits = rev
@@ -369,7 +378,8 @@ def format_event_lines(event, token=None):
     commit_lines = _format_commit_lines(repo_tag, actor, commits, total_count=total)
 
     # Some GitHub Events payloads omit commits; fall back to compare API.
-    if not commit_lines:
+    # Only do this when authenticated to avoid burning the low anonymous quota.
+    if not commit_lines and token:
         before = payload.get("before")
         head = payload.get("head")
         if before and head:
@@ -601,11 +611,43 @@ def github_poll(inp, conn=None, db=None, bot=None):
     if not watches:
         return
 
+    # With PostgreSQL, watches often persist across restarts, so it's common to
+    # have more repos watched. Anonymous GitHub API rate limits are very low.
+    # To avoid silently rate-limiting and appearing "broken", shard polling
+    # across cycles when unauthenticated.
+    if not token and len(watches) > MAX_REPOS_PER_POLL_NO_TOKEN:
+        key = (
+            id(conn),
+            getattr(conn, "server_host", None),
+            getattr(conn, "nick", None),
+        )
+        start = int(_poll_cursor_by_conn.get(key, 0)) % len(watches)
+        subset = []
+        for i in range(MAX_REPOS_PER_POLL_NO_TOKEN):
+            subset.append(watches[(start + i) % len(watches)])
+        _poll_cursor_by_conn[key] = start + MAX_REPOS_PER_POLL_NO_TOKEN
+        watches = subset
+
     for chan, repo, last_id, etag in watches:
         try:
             events, new_etag = _fetch_repo_events(repo, token=token, etag=etag)
-        except http.HTTPError:
-            # Avoid spamming the channel on API errors.
+        except http.HTTPError as e:
+            # Avoid spamming the channel on API errors, but do give a periodic
+            # hint when we're rate-limited (otherwise it looks like watches are
+            # broken).
+            code = getattr(e, "code", None)
+            if code == 403:
+                warn_key = (chan, repo)
+                now = _now()
+                last_warn = int(_last_rate_limit_warn.get(warn_key, 0) or 0)
+                if now - last_warn >= RATE_LIMIT_WARN_COOLDOWN:
+                    _last_rate_limit_warn[warn_key] = now
+                    _post_announcement(
+                        conn,
+                        chan,
+                        bot,
+                        "GitHub API rate limit hit; set api_keys.github token or reduce watched repos / increase github.poll_interval",
+                    )
             continue
         except Exception:
             continue
