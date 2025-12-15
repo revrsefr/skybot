@@ -18,6 +18,24 @@ To install dependencies, run:
 
     pip install -r requirements.txt
 
+## Database
+
+Skybot defaults to SQLite (stored under `persist/`).
+
+To use PostgreSQL instead, add this to `config.json`:
+
+    "database": {
+      "type": "postgres",
+      "postgres": {
+        "dsn": "postgresql://USER:PASSWORD@HOST:5432/DBNAME",
+        "schema_prefix": "skybot"
+      }
+    }
+
+Install the driver:
+
+    pip install "psycopg[binary]"
+
 Skybot runs on Python 2.7, 3.7 and Python 3.13.(WIP in some areas to full update code to 3.13, for now partial support.)
 
 ## License

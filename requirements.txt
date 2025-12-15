@@ -1,2 +1,5 @@
 lxml
 future
+
+# Optional: needed only if config.json sets database.type = "postgres"
+psycopg[binary]
