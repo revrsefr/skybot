@@ -1,4 +1,4 @@
-# Skybot (will rename it when find something)
+# Skybot (will rename it when find something).
 
 ## Goals
 * simplicity
