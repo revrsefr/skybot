@@ -507,6 +507,14 @@ def _git_watch_add(rest, chan="", db=None):
     if not (target and target.startswith("#")):
         raise ValueError("please specify a channel (e.g. #mychan)")
 
+    # Avoid confusing duplicates: tell the user if it's already being watched.
+    exists = db.execute(
+        "select 1 from github_watches where chan=? and repo=? limit 1",
+        (target, repo),
+    ).fetchone()
+    if exists:
+        return f"already watching {repo} in {target}"
+
     db.execute(
         "insert or ignore into github_watches(chan, repo, last_id, etag) values(?,?,NULL,NULL)",
         (target, repo),
