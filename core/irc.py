@@ -3,14 +3,14 @@ from builtins import object
 import re
 import socket
 import time
-import _thread
+import threading
 import queue
 
 from ssl import create_default_context, CERT_NONE, CERT_REQUIRED, SSLError
 
 
 DEFAULT_NAME = "skybot"
-DEFAULT_REALNAME = "Python bot - http://github.com/rmmh/skybot"
+DEFAULT_REALNAME = "Python bot - http://github.com/revrsefrskybot"
 DEFAULT_NICKSERV_NAME = "nickserv"
 DEFAULT_NICKSERV_COMMAND = "IDENTIFY %s"
 
@@ -65,8 +65,8 @@ class crlf_tcp(object):
                 time.sleep(60)
             else:
                 break
-        _thread.start_new_thread(self.recv_loop, ())
-        _thread.start_new_thread(self.send_loop, ())
+        threading.Thread(target=self.recv_loop, daemon=True).start()
+        threading.Thread(target=self.send_loop, daemon=True).start()
 
     def recv_from_socket(self, nbytes):
         return self.socket.recv(nbytes)
@@ -202,7 +202,7 @@ class IRC(object):
 
         self.connect()
 
-        _thread.start_new_thread(self.parse_loop, ())
+        threading.Thread(target=self.parse_loop, daemon=True).start()
 
     def set_conf(self, conf):
         self.nick = conf.get("nick", DEFAULT_NAME)
@@ -230,7 +230,7 @@ class IRC(object):
 
     def connect(self):
         self.conn = self.create_connection()
-        _thread.start_new_thread(self.conn.run, ())
+        threading.Thread(target=self.conn.run, daemon=True).start()
         self.cmd("NICK", [self.nick])
         self.cmd("USER", [self.user, "3", "*", self.realname])
         if self.server_password:
@@ -294,7 +294,7 @@ class FakeIRC(IRC):
 
         self.f = open(fn, "rb")
 
-        _thread.start_new_thread(self.parse_loop, ())
+        threading.Thread(target=self.parse_loop, daemon=True).start()
 
     def parse_loop(self):
         while True:

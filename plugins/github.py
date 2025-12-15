@@ -8,6 +8,7 @@ from util import hook, http
 API_BASE = "https://api.github.com"
 DEFAULT_POLL_INTERVAL = 60
 MAX_EVENTS_PER_POLL = 3
+MAX_COMMITS_PER_PUSH = 3
 
 _repo_re = re.compile(r"^(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)$")
 
@@ -114,6 +115,40 @@ def _short_sha(sha):
     if not sha:
         return ""
     return sha[:7]
+
+
+def _commit_subject(message):
+    if not message:
+        return ""
+    # Git commit messages can be multi-line; show the subject.
+    subject = str(message).splitlines()[0].strip()
+    subject = re.sub(r"\s+", " ", subject)
+    return subject
+
+
+def _push_commit_lines(repo_tag, actor, payload, total_count=None):
+    commits = payload.get("commits") or []
+    if not commits:
+        return []
+
+    show = commits[-MAX_COMMITS_PER_PUSH:]
+    lines = []
+    for c in show:
+        sha = _short_sha((c or {}).get("sha"))
+        subject = _commit_subject((c or {}).get("message"))
+        if sha and subject:
+            lines.append(f"[{repo_tag}] {actor} {sha} - {subject}")
+        elif sha:
+            lines.append(f"[{repo_tag}] {actor} {sha}")
+        elif subject:
+            lines.append(f"[{repo_tag}] {actor} - {subject}")
+
+    if isinstance(total_count, int) and total_count > len(show):
+        more = total_count - len(show)
+        if more > 0:
+            lines.append(f"[{repo_tag}] (+{more} more commits)")
+
+    return lines
 
 
 def format_event(event, token=None):
@@ -289,6 +324,31 @@ def format_event(event, token=None):
 
     # Fallback
     return f"[{_repo_short(repo)}] {actor} did {etype or 'something'} in {repo}"
+
+
+def format_event_lines(event, token=None):
+    """Return one or more IRC-friendly lines for an event.
+
+    For PushEvent, includes commit summary lines (short SHA + subject).
+    """
+
+    header = format_event(event, token=token)
+    lines = [header] if header else []
+
+    etype = event.get("type")
+    if etype != "PushEvent":
+        return lines
+
+    actor = (event.get("actor") or {}).get("login") or "someone"
+    repo = (event.get("repo") or {}).get("name") or "unknown/repo"
+    repo_tag = _repo_short(repo)
+    payload = event.get("payload") or {}
+
+    size = payload.get("size")
+    total = size if isinstance(size, int) else len(payload.get("commits") or [])
+
+    lines.extend(_push_commit_lines(repo_tag, actor, payload, total_count=total))
+    return lines
 
 
 def _poll_interval(bot):
@@ -535,7 +595,8 @@ def github_poll(inp, conn=None, db=None, bot=None):
             new_events = new_events[-MAX_EVENTS_PER_POLL:]
 
         for ev in new_events:
-            _post_announcement(conn, chan, bot, format_event(ev, token=token))
+            for line in format_event_lines(ev, token=token):
+                _post_announcement(conn, chan, bot, line)
 
         if overflow:
             _post_announcement(conn, chan, bot, f"(+{overflow} more events)")
