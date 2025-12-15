@@ -428,12 +428,19 @@ def _post(conn, chan, text):
     conn.msg(chan, text[:450])
 
 
+def _safe_one_line(text, limit=450):
+    if text is None:
+        return ""
+    text = str(text).replace("\n", " ").replace("\r", " ")
+    return text[:limit]
+
+
 def _post_announcement(conn, chan, bot, text):
     # No embedded timestamps and no pseudo-nick prefix.
     _post(conn, chan, text)
 
 
-def ghevent(inp, bot=None):
+def ghevent(inp, bot=None, input=None):
     """Show the latest public event for a repo.
 
     Use: `.git event owner/repo`
@@ -455,6 +462,16 @@ def ghevent(inp, bot=None):
         return "GitHub API error"
     if not events:
         return "no recent events"
+
+    # If invoked from a command context, emit the same multi-line output we use
+    # for channel announcements (header + optional commit lines).
+    # Returning strings with newlines won't work: core will only send the first
+    # line (see send_loop splitlines()[0]).
+    if input is not None:
+        for line in format_event_lines(events[0], token=token):
+            input.reply(_safe_one_line(line))
+        return None
+
     return format_event(events[0], token=token)
 
 
@@ -518,7 +535,7 @@ def _git_watch_remove(rest, chan="", db=None):
 
 
 @hook.command("git")
-def git(inp, chan="", db=None, bot=None, nick=""):
+def git(inp, chan="", db=None, bot=None, nick="", input=None):
     """GitHub helper commands (subcommand-style).
 
     Usage:
@@ -541,7 +558,7 @@ def git(inp, chan="", db=None, bot=None, nick=""):
 
     try:
         if sub in ("event", "events", "latest"):
-            return ghevent(rest, bot=bot)
+            return ghevent(rest, bot=bot, input=input)
 
         if sub in ("add", "watch"):
             return _git_watch_add(rest, chan=chan, db=db)
