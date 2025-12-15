@@ -1,9 +1,9 @@
 import re
-import _thread
+import threading
 import traceback
 from queue import Queue
 
-_thread.stack_size(1024 * 512)  # reduce vm size
+threading.stack_size(1024 * 512)  # reduce vm size
 
 
 class Input(dict):
@@ -90,7 +90,7 @@ def run(func, input):
 
     if args:
         if "db" in args and "db" not in input:
-            input.db = get_db_connection(input.conn)
+            input.db = bot.get_db_connection(input.conn)
         if "input" in args:
             input.input = input
         if 0 in args:
@@ -119,31 +119,33 @@ class Handler:
     def __init__(self, func):
         self.func = func
         self.input_queue = Queue()
-        _thread.start_new_thread(self.start, ())
+        self._stop_sentinel = object()
+        self._thread = threading.Thread(target=self.start, daemon=True)
+        self._thread.start()
 
     def start(self):
         uses_db = "db" in self.func._args
         db_conns = {}
         while True:
-            input = self.input_queue.get()
+            inp = self.input_queue.get()
 
-            if input == StopIteration:
+            if inp is self._stop_sentinel:
                 break
 
             if uses_db:
-                db = db_conns.get(input.conn)
+                db = db_conns.get(inp.conn)
                 if db is None:
-                    db = bot.get_db_connection(input.conn)
-                    db_conns[input.conn] = db
-                input.db = db
+                    db = bot.get_db_connection(inp.conn)
+                    db_conns[inp.conn] = db
+                inp.db = db
 
             try:
-                run(self.func, input)
-            except:
+                run(self.func, inp)
+            except Exception:
                 traceback.print_exc()
 
     def stop(self):
-        self.input_queue.put(StopIteration)
+        self.input_queue.put(self._stop_sentinel)
 
     def put(self, value):
         self.input_queue.put(value)
@@ -152,7 +154,7 @@ class Handler:
 def dispatch(input, kind, func, args, autohelp=False):
     for (sieve,) in bot.plugs["sieve"]:
         input = do_sieve(sieve, bot, input, func, kind, args)
-        if input == None:
+        if input is None:
             return
 
     if (
@@ -182,7 +184,7 @@ def dispatch(input, kind, func, args, autohelp=False):
     if func._thread:
         bot.threads[func].put(input)
     else:
-        _thread.start_new_thread(run, (func, input))
+        threading.Thread(target=run, args=(func, input), daemon=True).start()
 
 
 def match_command(command):
@@ -199,12 +201,14 @@ def match_command(command):
 
 
 def make_command_re(bot_prefix, is_private, bot_nick):
-    if not isinstance(bot_prefix, list):
+    if isinstance(bot_prefix, list):
+        bot_prefix = list(bot_prefix)
+    else:
         bot_prefix = [bot_prefix]
     if is_private:
-        bot_prefix.append("")  # empty prefix
+        bot_prefix = bot_prefix + [""]  # empty prefix
     bot_prefix = "|".join(re.escape(p) for p in bot_prefix)
-    bot_prefix += "|" + bot_nick + r"[:,]+\s+"
+    bot_prefix += "|" + re.escape(bot_nick) + r"[:,]+\s+"
     command_re = r"(?:%s)(\w+)(?:$|\s+)(.*)" % bot_prefix
     return re.compile(command_re)
 
