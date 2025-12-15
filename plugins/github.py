@@ -126,8 +126,7 @@ def _commit_subject(message):
     return subject
 
 
-def _push_commit_lines(repo_tag, actor, payload, total_count=None):
-    commits = payload.get("commits") or []
+def _format_commit_lines(repo_tag, actor, commits, total_count=None):
     if not commits:
         return []
 
@@ -149,6 +148,25 @@ def _push_commit_lines(repo_tag, actor, payload, total_count=None):
             lines.append(f"[{repo_tag}] (+{more} more commits)")
 
     return lines
+
+
+def _compare_commits(repo_full, before, head, token=None):
+    """Return a list of commit dicts: {sha, message} from the compare API."""
+
+    if not (repo_full and before and head):
+        return []
+    url = f"{API_BASE}/repos/{repo_full}/compare/{before}...{head}"
+    data, _ = _github_get_json(url, token=token)
+    if not data:
+        return []
+
+    commits = []
+    for c in data.get("commits") or []:
+        sha = (c or {}).get("sha")
+        message = ((c or {}).get("commit") or {}).get("message")
+        if sha or message:
+            commits.append({"sha": sha, "message": message})
+    return commits
 
 
 def format_event(event, token=None):
@@ -347,7 +365,30 @@ def format_event_lines(event, token=None):
     size = payload.get("size")
     total = size if isinstance(size, int) else len(payload.get("commits") or [])
 
-    lines.extend(_push_commit_lines(repo_tag, actor, payload, total_count=total))
+    commits = payload.get("commits") or []
+    commit_lines = _format_commit_lines(repo_tag, actor, commits, total_count=total)
+
+    # Some GitHub Events payloads omit commits; fall back to compare API.
+    if not commit_lines:
+        before = payload.get("before")
+        head = payload.get("head")
+        if before and head:
+            cmp_commits = _compare_commits(repo, before, head, token=token)
+            if not cmp_commits:
+                # Force-pushes can produce an empty forward compare.
+                cmp_commits = _compare_commits(repo, head, before, token=token)
+
+            if cmp_commits:
+                if not isinstance(total, int) or total <= 0:
+                    total = len(cmp_commits)
+                commit_lines = _format_commit_lines(
+                    repo_tag,
+                    actor,
+                    cmp_commits,
+                    total_count=total,
+                )
+
+    lines.extend(commit_lines)
     return lines
 
 
