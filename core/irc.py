@@ -316,6 +316,10 @@ class IRC:
         # WHOX is not negotiated via CAP; servers advertise it in RPL_ISUPPORT.
         return self.supports_isupport("WHOX")
 
+    def supports_monitor(self) -> bool:
+        # MONITOR is not negotiated via CAP; servers advertise it in RPL_ISUPPORT.
+        return self.supports_isupport("MONITOR")
+
     def set_conf(self, conf: dict[str, Any]) -> None:
         self.nick = conf.get("nick", DEFAULT_NAME)
         self.user = conf.get("user", DEFAULT_NAME)
@@ -493,6 +497,32 @@ class IRC:
             suffix = "," + str(token)
 
         self.cmd("WHO", [mask, f"%{requested_fields}{suffix}"])
+
+    # --- MONITOR (online/offline notifications) ---
+
+    def monitor_add(self, targets: list[str]) -> None:
+        """Add nicks to the server-side monitor list (if supported)."""
+        if not targets:
+            return
+        self.cmd("MONITOR", ["+", ",".join(targets)])
+
+    def monitor_remove(self, targets: list[str]) -> None:
+        """Remove nicks from the server-side monitor list (if supported)."""
+        if not targets:
+            return
+        self.cmd("MONITOR", ["-", ",".join(targets)])
+
+    def monitor_clear(self) -> None:
+        """Clear the server-side monitor list (if supported)."""
+        self.cmd("MONITOR", ["C"])
+
+    def monitor_list(self) -> None:
+        """Request the current monitor list (replies 732/733)."""
+        self.cmd("MONITOR", ["L"])
+
+    def monitor_status(self) -> None:
+        """Request online/offline status for the whole list (replies 730/731)."""
+        self.cmd("MONITOR", ["S"])
 
     def join(self, channel: str) -> None:
         self.cmd("JOIN", channel.split(" "))  # [chan, password]

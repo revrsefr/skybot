@@ -58,6 +58,7 @@ Skybot supports a small but useful subset of IRCv3:
 Related (non-CAP) extensions:
 
 * `WHOX` (ISUPPORT token) — extended `WHO` replies (numeric `354`). Skybot tracks ISUPPORT and can send WHOX-style queries via `conn.who(mask, fields=..., token=...)`.
+* `MONITOR` (ISUPPORT token) — server-side online/offline notifications via the `MONITOR` command (numerics `730`-`734`). Skybot provides helpers: `conn.monitor_add([...])`, `conn.monitor_remove([...])`, `conn.monitor_list()`, `conn.monitor_status()`, `conn.monitor_clear()`.
 
 ### Configuration
 
