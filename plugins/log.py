@@ -105,5 +105,6 @@ def log(paraml, input=None, bot=None):
     if input.chan:
         fd = get_log_fd(bot.persist_dir, input.server, input.chan)
         fd.write(timestamp + " " + beau + "\n")
+        fd.flush()
 
     print(timestamp, input.chan, beau)
