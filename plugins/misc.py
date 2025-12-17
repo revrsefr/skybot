@@ -73,6 +73,6 @@ def onjoin(paraml, conn=None):
 def version(inp, notice=None):
     ident, rev = get_version()
     notice(
-        "\x01VERSION skybot %s r%d - http://github.com/rmmh/"
+        "\x01VERSION skybot %s r%d - http://github.com/revrsefr/"
         "skybot/\x01" % (ident, rev)
     )
