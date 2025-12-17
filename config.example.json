@@ -3,6 +3,9 @@
     "local irc": {
       "server": "localhost",
       "nick": "Skybot",
+      "ircv3": {
+        "caps": ["message-tags", "server-time", "account-tag", "extended-join"]
+      },
       "channels": ["#dev"]
     }
   },

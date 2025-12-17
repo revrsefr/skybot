@@ -38,6 +38,49 @@ Install the driver:
 
 Skybot runs on Python 2.7, 3.7 and Python 3.13.(WIP in some areas to full update code to 3.13, for now partial support.)
 
+## IRCv3 support (message-tags, etc)
+
+Skybot supports a small but useful subset of IRCv3:
+
+* `message-tags` — parses incoming IRCv3 message tags (`@key=value;flag`) and exposes them to plugins
+* `server-time` — enables a `time` tag on servers that support it
+* `account-tag` — enables an `account` tag on servers that support it
+* `extended-join` — JOIN messages may include account/realname fields
+
+### Configuration
+
+IRCv3 capability configuration is per-connection (inside the `connections` object).
+
+Default behavior: Skybot requests `message-tags`, `server-time`, `account-tag`, and `extended-join` if the server advertises them.
+
+To override the requested capabilities:
+
+    "connections": {
+      "network name": {
+        "server": "irc.example.net",
+        "nick": "Skybot",
+        "ircv3": {
+          "caps": ["message-tags", "server-time", "account-tag", "extended-join"]
+        }
+      }
+    }
+
+(`"caps": [...]` at the top level of the connection is also accepted for compatibility.)
+
+### Plugin access
+
+For every incoming line, plugins receive a `tags` dict:
+
+* `input.tags` — mapping of tag name to value
+  * tags without a value (flag tags) map to `None`
+  * tags with an explicit empty value (`key=`) map to `""`
+
+Example:
+
+    @hook.regex(r"^\\.whoami$")
+    def whoami(inp, reply=None, tags=None, **kwargs):
+        reply("account=%s time=%s" % (tags.get("account"), tags.get("time")))
+
 ## Feeds plugin
 
 The feeds plugin ([plugins/feeds.py](plugins/feeds.py)) can watch RSS/Atom feeds and announce new items into IRC channels.
