@@ -262,6 +262,7 @@ class IRC:
         self.requested_caps: set[str] = set()
         self.enabled_caps: set[str] = set()
         self._cap_pending: set[str] = set()
+        self._cap_available: set[str] = set()
         self._cap_end_sent = False
 
         self.out: "queue.Queue[list[Any]]" = queue.Queue()  # responses from the server are placed here
@@ -297,7 +298,9 @@ class IRC:
         if caps is None:
             caps = conf.get("caps")
         if caps is None:
-            caps = ["message-tags"]
+            # Safe defaults: all are optional and will only be requested if the
+            # server advertises them in CAP LS.
+            caps = ["message-tags", "server-time", "account-tag", "extended-join"]
         self.requested_caps = set(caps)
 
         if self.conn is not None:
@@ -313,6 +316,7 @@ class IRC:
         # CAP negotiation should start before registration (NICK/USER).
         self._cap_end_sent = False
         self._cap_pending = set()
+        self._cap_available = set()
         if self.requested_caps:
             self.cmd("CAP", ["LS", "302"])
 
@@ -330,15 +334,23 @@ class IRC:
         caps_blob = paramlist[-1] if paramlist else ""
         caps = set(caps_blob.split()) if caps_blob else set()
 
+        # CAP LS can be multi-line with '*' continuation.
+        has_more = "*" in paramlist[2:-1]
+
         if subcmd == "LS":
-            to_request = sorted(self.requested_caps & caps)
+            self._cap_available |= caps
+            if has_more:
+                return
+
+            to_request = sorted(self.requested_caps & self._cap_available)
             if to_request:
                 self._cap_pending = set(to_request)
                 self.cmd("CAP", ["REQ", " ".join(to_request)])
-            else:
-                if not self._cap_end_sent:
-                    self.cmd("CAP", ["END"])
-                    self._cap_end_sent = True
+                return
+
+            if not self._cap_end_sent:
+                self.cmd("CAP", ["END"])
+                self._cap_end_sent = True
             return
 
         if subcmd in {"ACK", "NAK"}:
