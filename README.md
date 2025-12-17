@@ -105,6 +105,17 @@ Optional tuning (defaults are fine):
       }
     ]
 
+Flood escalation (kick first, ban on repeat):
+
+* `escalate.ban_after` — strike count to start banning (default `2`)
+* `escalate.window` — seconds in which strikes accumulate before resetting (default `600`)
+* `escalate.ban_length` — seconds to ban once `ban_after` is reached (default `300`)
+
+Notes:
+
+* Keep the rule-level `ban_length` as `0` for flood rules. Escalation controls bans.
+* Flood escalation uses the same identity key as the flood limiter (`nick!user@host`), scoped per server+channel.
+
 Flood backend:
 
 * Default is in-memory (fast, bounded with LRU).
@@ -118,6 +129,15 @@ Flood backend:
         "ban_length": 0
       }
     ]
+
+Flood tuning keys (in-memory backend only):
+
+* `flood.max_keys` — maximum tracked identities (default `50000`)
+* `flood.idle_ttl` — evict state for idle identities after N seconds (default `max(300, seconds*10)`)
+
+Flood tuning keys (DB backend):
+
+* `flood.idle_ttl` — controls cleanup of old DB rows
 
 ### Mojibake/badness example
 
@@ -137,7 +157,16 @@ In `msg`, you can use placeholders (unknown placeholders are left as-is):
 * `{channel}` / `{chan}` (also supports Ruby-style `#{channel}`)
 * `{nick}` `{user}` `{host}` `{server}` `{message}`
 * `{badness}` `{threshold}`
-* `{flood_count}` `{flood_seconds}` `{flood_hits}`
+* `{flood_backend}` `{flood_count}` `{flood_seconds}` `{flood_hits}` `{flood_tokens}` `{flood_max_keys}`
+* `{flood_strikes}` `{flood_ban_after}` `{flood_strike_window}` `{flood_action}` `{flood_ban_length}`
+
+### Database tables
+
+Crowdcontrol creates the following tables automatically:
+
+* `crowdcontrol_unbans` — scheduled unbans (used when `ban_length > 0`)
+* `crowdcontrol_flood` — flood token buckets (only when using `flood.backend: "db"`)
+* `crowdcontrol_flood_strikes` — strike counters for flood escalation (only when using `flood.backend: "db"`)
 
 ## License
 Skybot is public domain. If you find a way to make money using it, I'll be very impressed.

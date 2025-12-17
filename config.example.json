@@ -1,0 +1,51 @@
+{
+  "connections": {
+    "local irc": {
+      "server": "localhost",
+      "nick": "Skybot",
+      "channels": ["#dev"]
+    }
+  },
+  "prefix": ".",
+  "database": {
+    "type": "postgres",
+    "postgres": {
+      "dsn": "postgresql://USER:PASSWORD@HOST:5432/DBNAME",
+      "schema_prefix": "skybot"
+    }
+  },
+  "feeds": {
+    "poll_interval": 300,
+    "max_items_per_poll": 3
+  },
+  "crowdcontrol_unban": {
+    "poll_interval": 10,
+    "batch": 50
+  },
+  "crowdcontrol": [
+    {
+      "badness": 2,
+      "msg": "Mojibake/spam in #{channel} by {nick}!{user}@{host} (score={badness} threshold={threshold}).",
+      "kick": 1,
+      "ban_length": 60
+    },
+    {
+      "flood": {
+        "count": 5,
+        "seconds": 8,
+        "escalate": {"ban_after": 2, "window": 600, "ban_length": 300}
+      },
+      "msg": "Flood in #{channel} by {nick} ({flood_strikes}/{flood_ban_after}). Action={flood_action}.",
+      "kick": 1,
+      "ban_length": 0
+    }
+  ],
+  "disabled_plugins": [],
+  "disabled_commands": [],
+  "acls": {},
+  "api_keys": {
+    "github": "CHANGE_ME",
+    "pirateweather": "CHANGE_ME",
+    "google": "CHANGE_ME"
+  }
+}
