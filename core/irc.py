@@ -53,6 +53,36 @@ def _unescape_tag_value(value: str) -> str:
     return "".join(out)
 
 
+def _escape_tag_value(value: str) -> str:
+    # IRCv3 message-tag escaping: backslash, semicolon, space, CR, LF
+    return (
+        value.replace("\\", "\\\\")
+        .replace(";", "\\:")
+        .replace(" ", "\\s")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+
+
+def format_message_tags(tags: dict[str, Optional[str]]) -> str:
+    """Format IRCv3 message-tags prefix (without trailing space).
+
+    Invalid keys are skipped.
+    """
+    if not tags:
+        return ""
+
+    parts: list[str] = []
+    for key, value in tags.items():
+        if not key or any(ch in key for ch in (" ", ";", "=")):
+            continue
+        if value is None:
+            parts.append(key)
+        else:
+            parts.append(f"{key}={_escape_tag_value(value)}")
+    return "@" + ";".join(parts) if parts else ""
+
+
 def parse_message_tags(tag_blob: str) -> dict[str, Optional[str]]:
     """Parse IRCv3 message-tags (the part after '@' up to the first space).
 
@@ -302,12 +332,18 @@ class IRC:
             # server advertises them in CAP LS.
             caps = [
                 "message-tags",
+                "batch",
+                "cap-notify",
+                "labeled-response",
                 "server-time",
                 "account-tag",
                 "extended-join",
                 # Chat history capability name differs across networks.
                 "chathistory",
                 "draft/chathistory",
+                # Some networks use draft names for message IDs.
+                "msgid",
+                "draft/msgid",
             ]
         self.requested_caps = set(caps)
 
@@ -431,14 +467,39 @@ class IRC:
         self.cmd("CHATHISTORY", ["AFTER", target, reference, str(limit)])
 
     def cmd(self, command: str, params: Optional[list[str]] = None) -> None:
+        self.cmdv3(command, params=params, tags=None)
+
+    def cmdv3(
+        self,
+        command: str,
+        params: Optional[list[str]] = None,
+        tags: Optional[dict[str, Optional[str]]] = None,
+    ) -> None:
         if params:
             params[-1] = ":" + params[-1]
 
             params = [censor(p, self.censored_strings) for p in params]
 
-            self.send(command + " " + " ".join(params))
+            line = command + " " + " ".join(params)
         else:
-            self.send(command)
+            line = command
+
+        tag_prefix = format_message_tags(tags or {})
+        if tag_prefix:
+            line = tag_prefix + " " + line
+
+        self.send(line)
+
+    def cmd_labeled(self, command: str, params: Optional[list[str]] = None) -> str:
+        """Send a command tagged with @label=... for labeled-response.
+
+        Returns the label so callers can correlate responses.
+        """
+        # Keep labels simple and ASCII.
+        now_ms = int(time.time() * 1000)
+        label = f"skybot-{now_ms:x}"  # hex timestamp
+        self.cmdv3(command, params=params, tags={"label": label})
+        return label
 
     def send(self, line: str) -> None:
         self.conn.oqueue.put(line)

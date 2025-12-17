@@ -43,16 +43,20 @@ Skybot runs on Python 2.7, 3.7 and Python 3.13.(WIP in some areas to full update
 Skybot supports a small but useful subset of IRCv3:
 
 * `message-tags` — parses incoming IRCv3 message tags (`@key=value;flag`) and exposes them to plugins
+* `batch` — enables related-message groups (used by features like chat history)
+* `cap-notify` — server can notify clients about new/removed capabilities
+* `labeled-response` — lets clients label commands and correlate server responses via `@label=...`
 * `server-time` — enables a `time` tag on servers that support it
 * `account-tag` — enables an `account` tag on servers that support it
 * `extended-join` — JOIN messages may include account/realname fields
 * `chathistory` / `draft/chathistory` — allows requesting chat history via the `CHATHISTORY` command (server support varies)
+* `msgid` — when supported, servers attach a `msgid` tag to messages (often delivered via `message-tags`)
 
 ### Configuration
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `server-time`, `account-tag`, `extended-join`, and (if advertised) `chathistory`/`draft/chathistory`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `extended-join`, and (if advertised) `chathistory`/`draft/chathistory`.
 
 To override the requested capabilities:
 
@@ -61,7 +65,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "server-time", "account-tag", "extended-join", "chathistory", "draft/chathistory"]
+          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "extended-join", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
         }
       }
     }
@@ -81,6 +85,11 @@ Example:
     @hook.regex(r"^\\.whoami$")
     def whoami(inp, reply=None, tags=None, **kwargs):
         reply("account=%s time=%s" % (tags.get("account"), tags.get("time")))
+
+  If you want to use labeled-response from a plugin:
+
+    label = inp.conn.cmd_labeled("WHO", [inp.nick])
+    inp.reply("sent WHO with label=%s" % label)
 
   ### Chat history notes
 
