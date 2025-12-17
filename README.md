@@ -64,7 +64,7 @@ Related (non-CAP) extensions:
 * `WHOX` (ISUPPORT token) — extended `WHO` replies (numeric `354`). Skybot tracks ISUPPORT and can send WHOX-style queries via `conn.who(mask, fields=..., token=...)`.
 * `MONITOR` (ISUPPORT token) — server-side online/offline notifications via the `MONITOR` command (numerics `730`-`734`). Skybot provides helpers: `conn.monitor_add([...])`, `conn.monitor_remove([...])`, `conn.monitor_list()`, `conn.monitor_status()`, `conn.monitor_clear()`.
 * `UTF8ONLY` (ISUPPORT token) — server enforces UTF-8-only traffic; servers may use `FAIL/WARN ... INVALID_UTF8` when `standard-replies` is enabled.
-* `BOT` (ISUPPORT token) — advertises the bot user mode (often `+B`) used by the bot-mode extension.
+* `BOT` (ISUPPORT token) — advertises the bot user mode (often `+B`) used by the bot-mode extension. Skybot will set it on connect when available (disable with connection setting `"bot_mode": false`).
 
 ### Configuration
 

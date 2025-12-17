@@ -57,6 +57,12 @@ def onjoin(paraml, conn=None):
     if mode:
         conn.cmd("MODE", [conn.nick, mode])
 
+    # set bot mode (+B) when supported
+    if getattr(conn, "enable_bot_mode", True) and getattr(conn, "supports_bot_mode", lambda: False)():
+        letter = getattr(conn, "bot_mode_letter", lambda: None)()
+        if letter and (not mode or letter not in mode):
+            conn.cmd("MODE", [conn.nick, "+" + letter])
+
     conn.join_channels()
 
     # set user-agent as a side effect of reading the version

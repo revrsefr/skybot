@@ -275,6 +275,7 @@ class IRC:
         self.user = DEFAULT_NAME
         self.realname = DEFAULT_REALNAME
         self.user_mode = None
+        self.enable_bot_mode = True
 
         self.server_host = None
         self.server_port = 6667
@@ -328,11 +329,28 @@ class IRC:
         # bot-mode is advertised via ISUPPORT (e.g. BOT=B) and implemented as a user mode.
         return self.supports_isupport("BOT")
 
+    def bot_mode_letter(self) -> Optional[str]:
+        """Return the bot user mode letter (e.g. 'B') if available."""
+        if not self.supports_bot_mode():
+            return None
+
+        value = self.isupport.get("BOT")
+        if value is None:
+            return "B"
+
+        value = value.strip()
+        if not value:
+            return "B"
+
+        # Some servers may advertise multiple letters; pick the first.
+        return value[0]
+
     def set_conf(self, conf: dict[str, Any]) -> None:
         self.nick = conf.get("nick", DEFAULT_NAME)
         self.user = conf.get("user", DEFAULT_NAME)
         self.realname = conf.get("realname", DEFAULT_REALNAME)
         self.user_mode = conf.get("mode", None)
+        self.enable_bot_mode = conf.get("bot_mode", True)
 
         self.server_host = conf["server"]
         self.server_port = conf.get("port", 6667)
