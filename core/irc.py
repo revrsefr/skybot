@@ -340,6 +340,7 @@ class IRC:
                 "account-notify",
                 "extended-join",
                 "userhost-in-names",
+                "standard-replies",
                 # Chat history capability name differs across networks.
                 "chathistory",
                 "draft/chathistory",
