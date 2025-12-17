@@ -30,6 +30,30 @@ def _notice(conn, target: str, msg: str) -> None:
     conn.cmd("NOTICE", [target, msg])
 
 
+def _format_tags(tags: dict) -> str:
+    if not tags:
+        return ""
+
+    parts = []
+    for key in sorted(tags.keys()):
+        value = tags[key]
+        if value is None:
+            parts.append(str(key))
+        else:
+            parts.append(f"{key}={value}")
+
+    return " (" + ", ".join(parts) + ")" if parts else ""
+
+
+def _stats_message(paraml: list[str]) -> str:
+    # Stats numerics usually include our nick as paraml[0].
+    if not paraml:
+        return ""
+    if len(paraml) == 1:
+        return paraml[0]
+    return " ".join(paraml[1:])
+
+
 def _parse_args(inp: str) -> tuple[str, int]:
     parts = (inp or "").strip().split()
     letter = parts[0] if parts else _DEFAULT_LETTER
@@ -69,7 +93,7 @@ def statsdump(text, conn=None, nick=None, notice=None, admin=None):
 
     # STATS reply numerics will be picked up by the event hook below.
     conn.cmd("STATS", [letter])
-    notice(f"STATS {letter} requested; dumping tagged lines (limit={limit}).")
+    notice(f"STATS {letter}: requested (showing tagged lines only, limit={limit}).")
 
 
 @hook.event("*")
@@ -96,18 +120,29 @@ def _statsdump_events(paraml, input=None):
     if input.tags:
         state["seen"] += 1
         state["tagged"] += 1
-        _notice(
-            conn,
-            state["target"],
-            f"STATS {state['letter']} {input.command} tags={input.tags} params={input.paraml}",
-        )
+
+        message = _stats_message(input.paraml)
+        tags = dict(input.tags)
+        # The server-time tag is useful but very noisy; show it only if there
+        # are other tags too.
+        if set(tags.keys()) == {"time"}:
+            tags_display = ""
+        else:
+            tags_display = _format_tags(tags)
+
+        # Common friendly shortcuts.
+        if input.command == "242" and message.lower().startswith("server up "):
+            message = "Uptime: " + message[len("Server up ") :]
+
+        if message:
+            _notice(conn, state["target"], f"STATS {state['letter']}: {message}{tags_display}")
 
     # Stop conditions:
     if input.command == "219":
         _notice(
             conn,
             state["target"],
-            f"statsdump done (tagged_lines={state['tagged']}).",
+            f"statsdump done (tagged lines: {state['tagged']}).",
         )
         _state.pop(conn, None)
         return
