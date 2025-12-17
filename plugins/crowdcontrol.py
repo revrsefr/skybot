@@ -25,6 +25,8 @@ _FLOOD_LAST_CLEANUP = 0.0
 
 # DB-backed scheduled unbans (survives restarts, avoids time.sleep()).
 _UNBAN_LAST_POLL = 0.0
+_FLOOD_DB_LAST_CLEANUP = 0.0
+_FLOOD_DB_LAST_COMMIT = 0.0
 
 
 @hook.regex(r".*")
@@ -128,33 +130,58 @@ def crowdcontrol(
         if count <= 0 or seconds <= 0:
             return False, None
 
+        # Backend selection: default to in-process memory.
+        backend = "mem"
+        if isinstance(flood, dict):
+            backend = str(flood.get("backend", "mem")).strip().lower() or "mem"
+
         # Token bucket: allow a burst of `count` messages, refilling at count/seconds.
         burst = count
         rate = float(count) / float(seconds)
 
-        # Safety valves for large networks: cap stored identities and evict idle entries.
+        ident = _flood_key()
+        now_m = time.monotonic()
+
+        # Safety valves for large networks.
         if isinstance(flood, dict):
-            max_keys = int(flood.get("max_keys", 50000))
             idle_ttl = float(flood.get("idle_ttl", max(300.0, seconds * 10.0)))
         else:
-            max_keys = 50000
             idle_ttl = max(300.0, seconds * 10.0)
 
-        key = (server, chan, _flood_key())
-        now = time.monotonic()
+        if backend in ("db", "postgres", "postgresql"):
+            if db is None:
+                return False, None
+            return _db_flood_match(
+                db,
+                server=server,
+                chan=chan,
+                ident=ident,
+                burst=float(burst),
+                rate=float(rate),
+                idle_ttl=float(idle_ttl),
+            )
+
+        # In-memory backend (default)
+        if isinstance(flood, dict):
+            max_keys = int(flood.get("max_keys", 50000))
+            idle_ttl = float(idle_ttl)
+        else:
+            max_keys = 50000
+
+        key = (server, chan, ident)
 
         # Opportunistic cleanup and LRU bounding.
-        _flood_cleanup(now=now, idle_ttl=idle_ttl, max_keys=max_keys)
+        _flood_cleanup(now=now_m, idle_ttl=idle_ttl, max_keys=max_keys)
 
         state = _FLOOD_STATE.get(key)
         if state is None:
             tokens = float(burst)
-            last_ts = now
+            last_ts = now_m
         else:
             tokens, last_ts, _last_seen = state
-            refill = (now - last_ts) * rate
+            refill = (now_m - last_ts) * float(rate)
             tokens = min(float(burst), tokens + refill)
-            last_ts = now
+            last_ts = now_m
 
         tokens -= 1.0
         matched = tokens < 0.0
@@ -164,7 +191,7 @@ def crowdcontrol(
             tokens = float(burst) - 1.0
 
         # Update LRU ordering and enforce max size.
-        _FLOOD_STATE[key] = (tokens, last_ts, now)
+        _FLOOD_STATE[key] = (tokens, last_ts, now_m)
         _FLOOD_STATE.move_to_end(key, last=True)
         while len(_FLOOD_STATE) > max_keys:
             _FLOOD_STATE.popitem(last=False)
@@ -172,6 +199,7 @@ def crowdcontrol(
         # Provide placeholders for templates.
         approx_hits = int(max(0.0, float(burst) - tokens))
         return matched, {
+            "flood_backend": "mem",
             "flood_count": count,
             "flood_seconds": seconds,
             "flood_hits": approx_hits,
@@ -277,6 +305,95 @@ def _db_delete_unban(db, *, server: str, chan: str, mask: str) -> None:
         "delete from crowdcontrol_unbans where server=? and chan=? and mask=?",
         (server, chan.lower(), mask),
     )
+
+
+def _db_init_flood(db) -> None:
+    db.execute(
+        "create table if not exists crowdcontrol_flood(" "server, chan, ident, tokens real, last_ts real, last_seen real, " "primary key(server, chan, ident))"
+    )
+
+
+def _db_flood_cleanup(db, *, server: str, now_ts: float, idle_ttl: float) -> None:
+    global _FLOOD_DB_LAST_CLEANUP
+
+    # Run at most once per minute per process.
+    if now_ts - _FLOOD_DB_LAST_CLEANUP < 60.0:
+        return
+    _FLOOD_DB_LAST_CLEANUP = now_ts
+
+    cutoff = float(now_ts) - float(idle_ttl)
+    db.execute(
+        "delete from crowdcontrol_flood where server=? and last_seen<?",
+        (server, float(cutoff)),
+    )
+
+
+def _db_flood_commit_maybe(db, *, now_m: float) -> None:
+    global _FLOOD_DB_LAST_COMMIT
+    if now_m - _FLOOD_DB_LAST_COMMIT < 1.0:
+        return
+    _FLOOD_DB_LAST_COMMIT = now_m
+    db.commit()
+
+
+def _db_flood_match(
+    db,
+    *,
+    server: str,
+    chan: str,
+    ident: str,
+    burst: float,
+    rate: float,
+    idle_ttl: float,
+):
+    # DB-backed token bucket. This avoids in-process per-user memory at the cost of
+    # a DB read+write per message.
+    _db_init_flood(db)
+
+    now_m = time.monotonic()
+    now_ts = time.time()
+    _db_flood_cleanup(db, server=server, now_ts=now_ts, idle_ttl=idle_ttl)
+
+    row = db.execute(
+        "select tokens, last_ts from crowdcontrol_flood where server=? and chan=? and ident=?",
+        (server, chan.lower(), ident),
+    ).fetchone()
+
+    if row is None:
+        tokens = float(burst)
+        last_ts = float(now_m)
+    else:
+        try:
+            tokens = float(row[0])
+            last_ts = float(row[1])
+        except Exception:
+            tokens = float(burst)
+            last_ts = float(now_m)
+
+    refill = (float(now_m) - float(last_ts)) * float(rate)
+    tokens = min(float(burst), tokens + refill)
+    last_ts = float(now_m)
+
+    tokens -= 1.0
+    matched = tokens < 0.0
+    if matched:
+        tokens = float(burst) - 1.0
+
+    # Upsert/update state.
+    db.execute(
+        "insert or replace into crowdcontrol_flood(server, chan, ident, tokens, last_ts, last_seen) values(?,?,?,?,?,?)",
+        (server, chan.lower(), ident, float(tokens), float(last_ts), float(now_ts)),
+    )
+    _db_flood_commit_maybe(db, now_m=float(now_m))
+
+    approx_hits = int(max(0.0, float(burst) - tokens))
+    return matched, {
+        "flood_backend": "db",
+        "flood_count": int(burst),
+        "flood_seconds": round(float(burst) / float(rate), 2) if rate > 0 else 0,
+        "flood_hits": approx_hits,
+        "flood_tokens": round(tokens, 2),
+    }
 
 
 @hook.event("*")

@@ -101,6 +101,20 @@ Optional tuning (defaults are fine):
       }
     ]
 
+Flood backend:
+
+* Default is in-memory (fast, bounded with LRU).
+* Optional DB-backed mode exists if you really want *no per-user state in the bot process*, but it does a DB read+write per message and may not scale well on very busy channels.
+
+    "crowdcontrol": [
+      {
+        "flood": {"backend": "db", "count": 5, "seconds": 8},
+        "msg": "Flood in #{channel} (>{flood_count}/{flood_seconds}s via {flood_backend}).",
+        "kick": 1,
+        "ban_length": 0
+      }
+    ]
+
 ### Mojibake/badness example
 
     "crowdcontrol": [
