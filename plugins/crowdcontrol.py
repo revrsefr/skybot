@@ -16,8 +16,46 @@ from util.badness import badness
 
 
 @hook.regex(r".*")
-def crowdcontrol(inp, kick=None, ban=None, unban=None, reply=None, bot=None):
-    inp = inp.group(0)
+def crowdcontrol(
+    inp,
+    kick=None,
+    ban=None,
+    unban=None,
+    reply=None,
+    bot=None,
+    chan="",
+    nick="",
+    user="",
+    host="",
+    server="",
+):
+    msg_text = inp.group(0)
+
+    class _SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + str(key) + "}"
+
+    def _format_reason(template, *, extra=None):
+        if template is None:
+            return None
+        s = str(template)
+        # Support Ruby-style interpolation in configs: "#{channel}".
+        s = s.replace("#{channel}", "{channel}")
+        data = {
+            "channel": chan,
+            "chan": chan,
+            "nick": nick,
+            "user": user,
+            "host": host,
+            "server": server,
+            "message": msg_text,
+        }
+        if isinstance(extra, dict):
+            data.update(extra)
+        try:
+            return s.format_map(_SafeDict(data))
+        except Exception:
+            return s
     for rule in bot.config.get("crowdcontrol", []):
         # A rule matches either by regex (`re`) or by mojibake 'badness' score.
         # Example badness rule:
@@ -25,19 +63,30 @@ def crowdcontrol(inp, kick=None, ban=None, unban=None, reply=None, bot=None):
         rule_badness = rule.get("badness")
         if rule_badness is not None:
             try:
-                matched = badness(inp) >= int(rule_badness)
+                score = badness(msg_text)
+                threshold = int(rule_badness)
+                matched = score >= threshold
             except Exception:
+                score = 0
+                threshold = None
                 matched = False
         else:
             rule_re = rule.get("re")
             if not rule_re:
                 continue
-            matched = re.search(rule_re, inp) is not None
+            matched = re.search(rule_re, msg_text) is not None
 
         if matched:
             should_kick = rule.get("kick", 0)
             ban_length = rule.get("ban_length", 0)
-            reason = rule.get("msg")
+            reason = _format_reason(
+                rule.get("msg"),
+                extra={
+                    "badness": score,
+                    "threshold": threshold,
+                    "re": rule.get("re"),
+                },
+            )
             if ban_length != 0:
                 ban()
             if should_kick:
