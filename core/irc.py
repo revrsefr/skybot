@@ -324,6 +324,10 @@ class IRC:
         # UTF8ONLY is not negotiated via CAP; servers advertise it in RPL_ISUPPORT.
         return self.supports_isupport("UTF8ONLY")
 
+    def supports_bot_mode(self) -> bool:
+        # bot-mode is advertised via ISUPPORT (e.g. BOT=B) and implemented as a user mode.
+        return self.supports_isupport("BOT")
+
     def set_conf(self, conf: dict[str, Any]) -> None:
         self.nick = conf.get("nick", DEFAULT_NAME)
         self.user = conf.get("user", DEFAULT_NAME)
@@ -357,7 +361,10 @@ class IRC:
                 "server-time",
                 "account-tag",
                 "account-notify",
+                "chghost",
                 "extended-join",
+                "invite-notify",
+                "multi-prefix",
                 "userhost-in-names",
                 "standard-replies",
                 "extended-monitor",

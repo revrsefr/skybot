@@ -49,7 +49,10 @@ Skybot supports a small but useful subset of IRCv3:
 * `server-time` — enables a `time` tag on servers that support it
 * `account-tag` — enables an `account` tag on servers that support it
 * `account-notify` — sends `ACCOUNT` messages when a user's account status changes
+* `chghost` — sends `CHGHOST` messages when a user's user/host changes
 * `extended-join` — JOIN messages may include account/realname fields
+* `invite-notify` — notifies you when you are invited to channels
+* `multi-prefix` — NAMES replies can include multiple user prefixes (e.g. `@+nick`)
 * `userhost-in-names` — NAMES replies may include `nick!user@host` entries
 * `standard-replies` — server may use standardized numeric replies for common errors (varies by server)
 * `extended-monitor` — extends MONITOR to send metadata change notifications (away/account/chghost/setname) for monitored nicks
@@ -61,12 +64,13 @@ Related (non-CAP) extensions:
 * `WHOX` (ISUPPORT token) — extended `WHO` replies (numeric `354`). Skybot tracks ISUPPORT and can send WHOX-style queries via `conn.who(mask, fields=..., token=...)`.
 * `MONITOR` (ISUPPORT token) — server-side online/offline notifications via the `MONITOR` command (numerics `730`-`734`). Skybot provides helpers: `conn.monitor_add([...])`, `conn.monitor_remove([...])`, `conn.monitor_list()`, `conn.monitor_status()`, `conn.monitor_clear()`.
 * `UTF8ONLY` (ISUPPORT token) — server enforces UTF-8-only traffic; servers may use `FAIL/WARN ... INVALID_UTF8` when `standard-replies` is enabled.
+* `BOT` (ISUPPORT token) — advertises the bot user mode (often `+B`) used by the bot-mode extension.
 
 ### Configuration
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `extended-join`, `userhost-in-names`, `standard-replies`, `extended-monitor`, and (if advertised) `chathistory`/`draft/chathistory`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `multi-prefix`, `userhost-in-names`, `standard-replies`, `extended-monitor`, and (if advertised) `chathistory`/`draft/chathistory`.
 
 To override the requested capabilities:
 
@@ -75,7 +79,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "extended-join", "userhost-in-names", "standard-replies", "extended-monitor", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
+          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
         }
       }
     }
