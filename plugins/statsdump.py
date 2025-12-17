@@ -76,7 +76,10 @@ def statsdump(text, conn=None, nick=None, notice=None, admin=None):
     letter, limit = _parse_args(text)
 
     if not admin:
-        notice("statsdump: admin-only")
+        notice(
+            "statsdump: admin-only. Add your nick/host to this connection's "
+            "admins list in config.json (e.g. \"admins\": [\"reverse\", \"your.host\"])."
+        )
         return
 
     if "inspircd.org/stats-tags" not in conn.enabled_caps:
