@@ -20,6 +20,59 @@ DEFAULT_NICKSERV_NAME = "nickserv"
 DEFAULT_NICKSERV_COMMAND = "IDENTIFY %s"
 
 
+def _unescape_tag_value(value: str) -> str:
+    # IRCv3 message-tag escaping: \\: backslash, \: semicolon, \s space, \r CR, \n LF
+    out: list[str] = []
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+
+        i += 1
+        if i >= len(value):
+            break
+
+        esc = value[i]
+        if esc == ":":
+            out.append(";")
+        elif esc == "s":
+            out.append(" ")
+        elif esc == "r":
+            out.append("\r")
+        elif esc == "n":
+            out.append("\n")
+        elif esc == "\\":
+            out.append("\\")
+        else:
+            # Unknown escape: keep the character (drop the backslash).
+            out.append(esc)
+        i += 1
+    return "".join(out)
+
+
+def parse_message_tags(tag_blob: str) -> dict[str, Optional[str]]:
+    """Parse IRCv3 message-tags (the part after '@' up to the first space).
+
+    Returns a dict mapping tag keys to values (or None if no '=value' was present).
+    """
+    tags: dict[str, Optional[str]] = {}
+    if not tag_blob:
+        return tags
+
+    for item in tag_blob.split(";"):
+        if not item:
+            continue
+        if "=" in item:
+            key, value = item.split("=", 1)
+            tags[key] = _unescape_tag_value(value)
+        else:
+            tags[item] = None
+    return tags
+
+
 def decode(txt: bytes) -> str:
     for codec in ("utf-8", "iso-8859-1", "shift_jis", "cp1252"):
         try:
@@ -205,9 +258,15 @@ class IRC:
         self.admins = []
         self.censored_strings = []
 
+        # IRCv3 capability negotiation (minimal): request message-tags by default.
+        self.requested_caps: set[str] = set()
+        self.enabled_caps: set[str] = set()
+        self._cap_pending: set[str] = set()
+        self._cap_end_sent = False
+
         self.out: "queue.Queue[list[Any]]" = queue.Queue()  # responses from the server are placed here
         # format: [rawline, prefix, command, params,
-        # nick, user, host, paramlist, msg]
+        # nick, user, host, paramlist, msg, tags]
 
         self.set_conf(conf)
 
@@ -233,6 +292,14 @@ class IRC:
         self.admins = conf.get("admins", [])
         self.censored_strings = conf.get("censored_strings", [])
 
+        ircv3 = conf.get("ircv3", {}) or {}
+        caps = ircv3.get("caps")
+        if caps is None:
+            caps = conf.get("caps")
+        if caps is None:
+            caps = ["message-tags"]
+        self.requested_caps = set(caps)
+
         if self.conn is not None:
             self.join_channels()
 
@@ -242,11 +309,46 @@ class IRC:
     def connect(self) -> None:
         self.conn = self.create_connection()
         threading.Thread(target=self.conn.run, daemon=True).start()
+
+        # CAP negotiation should start before registration (NICK/USER).
+        self._cap_end_sent = False
+        self._cap_pending = set()
+        if self.requested_caps:
+            self.cmd("CAP", ["LS", "302"])
+
         if self.server_password:
             # PASS should be sent before NICK/USER on most networks.
             self.cmd("PASS", [self.server_password])
         self.cmd("NICK", [self.nick])
         self.cmd("USER", [self.user, "3", "*", self.realname])
+
+    def _handle_cap(self, paramlist: list[str]) -> None:
+        if not self.requested_caps or len(paramlist) < 2:
+            return
+
+        subcmd = paramlist[1].upper()
+        caps_blob = paramlist[-1] if paramlist else ""
+        caps = set(caps_blob.split()) if caps_blob else set()
+
+        if subcmd == "LS":
+            to_request = sorted(self.requested_caps & caps)
+            if to_request:
+                self._cap_pending = set(to_request)
+                self.cmd("CAP", ["REQ", " ".join(to_request)])
+            else:
+                if not self._cap_end_sent:
+                    self.cmd("CAP", ["END"])
+                    self._cap_end_sent = True
+            return
+
+        if subcmd in {"ACK", "NAK"}:
+            if subcmd == "ACK":
+                self.enabled_caps |= caps
+            self._cap_pending -= caps
+            if not self._cap_pending and not self._cap_end_sent:
+                self.cmd("CAP", ["END"])
+                self._cap_end_sent = True
+            return
 
     def parse_loop(self) -> None:
         while True:
@@ -255,6 +357,12 @@ class IRC:
             if msg == StopIteration:
                 self.connect()
                 continue
+
+            rawline = msg
+            tags: dict[str, Optional[str]] = {}
+            if msg.startswith("@"):
+                tag_part, msg = msg.split(" ", 1)
+                tags = parse_message_tags(tag_part[1:])
 
             if msg.startswith(":"):  # has a prefix
                 prefix, command, params = self.IRC_PREFIX_REM(msg).groups()
@@ -268,8 +376,11 @@ class IRC:
                     paramlist[-1] = paramlist[-1][1:]
                 lastparam = paramlist[-1]
             self.out.put(
-                [msg, prefix, command, params, nick, user, host, paramlist, lastparam]
+                [rawline, prefix, command, params, nick, user, host, paramlist, lastparam, tags]
             )
+
+            if command == "CAP":
+                self._handle_cap(paramlist)
 
             if command == "PING":
                 self.cmd("PONG", paramlist)
@@ -316,6 +427,12 @@ class FakeIRC(IRC):
                 print("!!!!DONE READING FILE!!!!")
                 return
 
+            rawline = msg
+            tags: dict[str, Optional[str]] = {}
+            if msg.startswith("@"):
+                tag_part, msg = msg.split(" ", 1)
+                tags = parse_message_tags(tag_part[1:])
+
             if msg.startswith(":"):  # has a prefix
                 prefix, command, params = self.IRC_PREFIX_REM(msg).groups()
             else:
@@ -328,10 +445,13 @@ class FakeIRC(IRC):
                     paramlist[-1] = paramlist[-1][1:]
                 lastparam = paramlist[-1]
             self.out.put(
-                [msg, prefix, command, params, nick, user, host, paramlist, lastparam]
+                [rawline, prefix, command, params, nick, user, host, paramlist, lastparam, tags]
             )
             if command == "PING":
                 self.cmd("PONG", [params])
+
+            if command == "CAP":
+                self._handle_cap(paramlist)
 
     def cmd(self, command, params=None):
         pass

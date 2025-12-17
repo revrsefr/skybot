@@ -8,7 +8,7 @@ threading.stack_size(1024 * 512)  # reduce vm size
 
 class Input(dict):
     def __init__(
-        self, conn, raw, prefix, command, params, nick, user, host, paraml, msg
+        self, conn, raw, prefix, command, params, nick, user, host, paraml, msg, tags
     ):
 
         server = conn.server_host
@@ -59,6 +59,7 @@ class Input(dict):
             host=host,
             paraml=paraml,
             msg=msg,
+            tags=tags,
             server=server,
             chan=chan,
             notice=notice,
