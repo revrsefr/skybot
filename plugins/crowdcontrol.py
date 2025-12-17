@@ -3,7 +3,7 @@
 
 import re
 import time
-from collections import deque
+from collections import OrderedDict
 from util import hook
 from util.badness import badness
 
@@ -17,8 +17,10 @@ from util.badness import badness
 
 
 # In-memory flood tracking (per-process, resets on restart).
-# Keyed by (channel, identity) -> deque[timestamps]
-_FLOOD_STATE = {}
+# Uses a bounded token-bucket per (channel, identity) to keep memory stable.
+# Keyed by (channel, identity) -> (tokens: float, last_ts: float, last_seen: float)
+_FLOOD_STATE = OrderedDict()
+_FLOOD_LAST_CLEANUP = 0.0
 
 
 @hook.regex(r".*")
@@ -69,9 +71,30 @@ def crowdcontrol(
             return f"{nick}!{user}@{host}".strip("!@")
         return nick
 
+    def _flood_cleanup(*, now, idle_ttl, max_keys):
+        global _FLOOD_LAST_CLEANUP
+
+        # Periodic cleanup (bounded work): drop least-recently-seen entries.
+        # OrderedDict is maintained as LRU by _flood_match.
+        if now - _FLOOD_LAST_CLEANUP < 60.0:
+            return
+        _FLOOD_LAST_CLEANUP = now
+
+        cutoff = now - float(idle_ttl)
+        while _FLOOD_STATE:
+            _, state = next(iter(_FLOOD_STATE.items()))
+            _tokens, _last_ts, last_seen = state
+            if last_seen >= cutoff and len(_FLOOD_STATE) <= max_keys:
+                break
+            _FLOOD_STATE.popitem(last=False)
+
     def _flood_match(rule):
         flood = rule.get("flood")
         if flood is None:
+            return False, None
+
+        # Only apply flood control to channel traffic.
+        if not chan:
             return False, None
 
         # Accept either a dict (preferred) or a truthy value + top-level keys.
@@ -90,28 +113,55 @@ def crowdcontrol(
         if count <= 0 or seconds <= 0:
             return False, None
 
+        # Token bucket: allow a burst of `count` messages, refilling at count/seconds.
+        burst = count
+        rate = float(count) / float(seconds)
+
+        # Safety valves for large networks: cap stored identities and evict idle entries.
+        if isinstance(flood, dict):
+            max_keys = int(flood.get("max_keys", 50000))
+            idle_ttl = float(flood.get("idle_ttl", max(300.0, seconds * 10.0)))
+        else:
+            max_keys = 50000
+            idle_ttl = max(300.0, seconds * 10.0)
+
         key = (chan, _flood_key())
         now = time.monotonic()
-        dq = _FLOOD_STATE.get(key)
-        if dq is None:
-            dq = deque()
-            _FLOOD_STATE[key] = dq
 
-        cutoff = now - seconds
-        while dq and dq[0] < cutoff:
-            dq.popleft()
-        dq.append(now)
+        # Opportunistic cleanup and LRU bounding.
+        _flood_cleanup(now=now, idle_ttl=idle_ttl, max_keys=max_keys)
 
-        hits = len(dq)
-        matched = hits > count
+        state = _FLOOD_STATE.get(key)
+        if state is None:
+            tokens = float(burst)
+            last_ts = now
+        else:
+            tokens, last_ts, _last_seen = state
+            refill = (now - last_ts) * rate
+            tokens = min(float(burst), tokens + refill)
+            last_ts = now
+
+        tokens -= 1.0
+        matched = tokens < 0.0
+
+        # Avoid repeated actions on consecutive lines: once it triggers, reset the bucket.
         if matched:
-            # Avoid repeated actions on the very next line.
-            dq.clear()
+            tokens = float(burst) - 1.0
 
+        # Update LRU ordering and enforce max size.
+        _FLOOD_STATE[key] = (tokens, last_ts, now)
+        _FLOOD_STATE.move_to_end(key, last=True)
+        while len(_FLOOD_STATE) > max_keys:
+            _FLOOD_STATE.popitem(last=False)
+
+        # Provide placeholders for templates.
+        approx_hits = int(max(0.0, float(burst) - tokens))
         return matched, {
             "flood_count": count,
             "flood_seconds": seconds,
-            "flood_hits": hits,
+            "flood_hits": approx_hits,
+            "flood_tokens": round(tokens, 2),
+            "flood_max_keys": max_keys,
         }
 
     for rule in bot.config.get("crowdcontrol", []):
