@@ -300,7 +300,15 @@ class IRC:
         if caps is None:
             # Safe defaults: all are optional and will only be requested if the
             # server advertises them in CAP LS.
-            caps = ["message-tags", "server-time", "account-tag", "extended-join"]
+            caps = [
+                "message-tags",
+                "server-time",
+                "account-tag",
+                "extended-join",
+                # Chat history capability name differs across networks.
+                "chathistory",
+                "draft/chathistory",
+            ]
         self.requested_caps = set(caps)
 
         if self.conn is not None:
@@ -407,6 +415,20 @@ class IRC:
 
     def msg(self, target: str, text: str) -> None:
         self.cmd("PRIVMSG", [target, text])
+
+    # --- IRCv3 chat history helpers ---
+    # These simply send CHATHISTORY requests. Servers reply using BATCH and
+    # message-tags (`@batch=`) when the negotiated capability is enabled.
+    # Plugins can hook on BATCH events and/or filter by `input.tags.get("batch")`.
+
+    def chathistory_latest(self, target: str, limit: int = 50) -> None:
+        self.cmd("CHATHISTORY", ["LATEST", target, "*", str(limit)])
+
+    def chathistory_before(self, target: str, reference: str, limit: int = 50) -> None:
+        self.cmd("CHATHISTORY", ["BEFORE", target, reference, str(limit)])
+
+    def chathistory_after(self, target: str, reference: str, limit: int = 50) -> None:
+        self.cmd("CHATHISTORY", ["AFTER", target, reference, str(limit)])
 
     def cmd(self, command: str, params: Optional[list[str]] = None) -> None:
         if params:

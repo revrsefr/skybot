@@ -46,12 +46,13 @@ Skybot supports a small but useful subset of IRCv3:
 * `server-time` — enables a `time` tag on servers that support it
 * `account-tag` — enables an `account` tag on servers that support it
 * `extended-join` — JOIN messages may include account/realname fields
+* `chathistory` / `draft/chathistory` — allows requesting chat history via the `CHATHISTORY` command (server support varies)
 
 ### Configuration
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `server-time`, `account-tag`, and `extended-join` if the server advertises them.
+Default behavior: Skybot requests `message-tags`, `server-time`, `account-tag`, `extended-join`, and (if advertised) `chathistory`/`draft/chathistory`.
 
 To override the requested capabilities:
 
@@ -60,7 +61,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "server-time", "account-tag", "extended-join"]
+          "caps": ["message-tags", "server-time", "account-tag", "extended-join", "chathistory", "draft/chathistory"]
         }
       }
     }
@@ -80,6 +81,19 @@ Example:
     @hook.regex(r"^\\.whoami$")
     def whoami(inp, reply=None, tags=None, **kwargs):
         reply("account=%s time=%s" % (tags.get("account"), tags.get("time")))
+
+  ### Chat history notes
+
+  Skybot does not automatically fetch history on connect; it only provides the plumbing.
+
+  If the server supports `CHATHISTORY`, a plugin can request history using the connection object:
+
+  * `conn.chathistory_latest("#channel", limit=50)`
+  * `conn.chathistory_before("#channel", reference="2025-12-17T00:00:00.000Z", limit=50)`
+  * `conn.chathistory_after("#channel", reference="2025-12-17T00:00:00.000Z", limit=50)`
+
+  Servers deliver results using `BATCH` plus `@batch=...` message tags on the enclosed lines.
+  You can read the batch association from `input.tags.get("batch")`.
 
 ## Feeds plugin
 
