@@ -337,6 +337,7 @@ class IRC:
                 "labeled-response",
                 "server-time",
                 "account-tag",
+                "account-notify",
                 "extended-join",
                 # Chat history capability name differs across networks.
                 "chathistory",

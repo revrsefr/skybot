@@ -48,6 +48,7 @@ Skybot supports a small but useful subset of IRCv3:
 * `labeled-response` — lets clients label commands and correlate server responses via `@label=...`
 * `server-time` — enables a `time` tag on servers that support it
 * `account-tag` — enables an `account` tag on servers that support it
+* `account-notify` — sends `ACCOUNT` messages when a user's account status changes
 * `extended-join` — JOIN messages may include account/realname fields
 * `chathistory` / `draft/chathistory` — allows requesting chat history via the `CHATHISTORY` command (server support varies)
 * `msgid` — when supported, servers attach a `msgid` tag to messages (often delivered via `message-tags`)
@@ -56,7 +57,7 @@ Skybot supports a small but useful subset of IRCv3:
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `extended-join`, and (if advertised) `chathistory`/`draft/chathistory`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `extended-join`, and (if advertised) `chathistory`/`draft/chathistory`.
 
 To override the requested capabilities:
 
@@ -65,7 +66,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "extended-join", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
+          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "extended-join", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
         }
       }
     }
