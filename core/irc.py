@@ -320,6 +320,10 @@ class IRC:
         # MONITOR is not negotiated via CAP; servers advertise it in RPL_ISUPPORT.
         return self.supports_isupport("MONITOR")
 
+    def supports_utf8only(self) -> bool:
+        # UTF8ONLY is not negotiated via CAP; servers advertise it in RPL_ISUPPORT.
+        return self.supports_isupport("UTF8ONLY")
+
     def set_conf(self, conf: dict[str, Any]) -> None:
         self.nick = conf.get("nick", DEFAULT_NAME)
         self.user = conf.get("user", DEFAULT_NAME)
