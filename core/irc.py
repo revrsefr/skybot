@@ -288,6 +288,10 @@ class IRC:
         self.admins = []
         self.censored_strings = []
 
+        # ISUPPORT (005) feature tokens.
+        # Keys map to either None (flag token) or a string value (KEY=VALUE).
+        self.isupport: dict[str, Optional[str]] = {}
+
         # IRCv3 capability negotiation (minimal): request message-tags by default.
         self.requested_caps: set[str] = set()
         self.enabled_caps: set[str] = set()
@@ -304,6 +308,13 @@ class IRC:
         self.connect()
 
         threading.Thread(target=self.parse_loop, daemon=True).start()
+
+    def supports_isupport(self, token: str) -> bool:
+        return token in self.isupport
+
+    def supports_whox(self) -> bool:
+        # WHOX is not negotiated via CAP; servers advertise it in RPL_ISUPPORT.
+        return self.supports_isupport("WHOX")
 
     def set_conf(self, conf: dict[str, Any]) -> None:
         self.nick = conf.get("nick", DEFAULT_NAME)
@@ -438,11 +449,50 @@ class IRC:
                 [rawline, prefix, command, params, nick, user, host, paramlist, lastparam, tags]
             )
 
+            if command == "005":
+                # RPL_ISUPPORT: <nick> <tokens...> :are supported by this server
+                # Tokens can be "KEY" or "KEY=VALUE".
+                for item in paramlist[1:-1]:
+                    if not item or item == ":":
+                        continue
+                    if "=" in item:
+                        key, value = item.split("=", 1)
+                        self.isupport[key] = value
+                    else:
+                        self.isupport[item] = None
+
             if command == "CAP":
                 self._handle_cap(paramlist)
 
             if command == "PING":
                 self.cmd("PONG", paramlist)
+
+    def who(self, mask: str, fields: Optional[str] = None, token: Optional[int] = None) -> None:
+        """Send WHO (and WHOX if supported).
+
+        If the server advertises WHOX via ISUPPORT (005) and `fields` is provided,
+        this will send an extended WHO in the form:
+
+            WHO <mask> %<fields>[,<token>]
+
+        If `token` is provided, the `t` field is automatically included so the
+        server returns the token in 354 replies.
+        """
+        if not fields or not self.supports_whox():
+            self.cmd("WHO", [mask])
+            return
+
+        requested_fields = fields
+        suffix = ""
+        if token is not None:
+            # WHOX tokens must be 1-3 digits.
+            if token < 0 or token > 999:
+                raise ValueError("WHOX token must be between 0 and 999")
+            if "t" not in requested_fields:
+                requested_fields += "t"
+            suffix = "," + str(token)
+
+        self.cmd("WHO", [mask, f"%{requested_fields}{suffix}"])
 
     def join(self, channel: str) -> None:
         self.cmd("JOIN", channel.split(" "))  # [chan, password]

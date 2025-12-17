@@ -55,6 +55,10 @@ Skybot supports a small but useful subset of IRCv3:
 * `chathistory` / `draft/chathistory` — allows requesting chat history via the `CHATHISTORY` command (server support varies)
 * `msgid` — when supported, servers attach a `msgid` tag to messages (often delivered via `message-tags`)
 
+Related (non-CAP) extensions:
+
+* `WHOX` (ISUPPORT token) — extended `WHO` replies (numeric `354`). Skybot tracks ISUPPORT and can send WHOX-style queries via `conn.who(mask, fields=..., token=...)`.
+
 ### Configuration
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
@@ -93,6 +97,17 @@ Example:
 
     label = inp.conn.cmd_labeled("WHO", [inp.nick])
     inp.reply("sent WHO with label=%s" % label)
+
+  If you want to request account/host info using WHOX (when the server supports it):
+
+    # Request: account (a), user (u), host (h), nick (n)
+    inp.conn.who("#channel", fields="auhn", token=42)
+
+    # Listen for numeric 354 (RPL_WHOSPCRPL) in a plugin:
+    @hook.event("354")
+    def whox_reply(inp, **kwargs):
+        # inp.paraml contains the WHOX fields in server-defined order.
+        pass
 
   ### Chat history notes
 
