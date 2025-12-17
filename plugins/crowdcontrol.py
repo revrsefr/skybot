@@ -22,11 +22,17 @@ from util.badness import badness
 _FLOOD_STATE = OrderedDict()
 _FLOOD_LAST_CLEANUP = 0.0
 
+# Flood strike tracking for escalation (kick first, ban on repeat).
+# Keyed by (server, channel, identity) -> (strikes: int, last_ts: float, last_seen: float)
+_FLOOD_STRIKES = OrderedDict()
+_FLOOD_STRIKES_LAST_CLEANUP = 0.0
+
 
 # DB-backed scheduled unbans (survives restarts, avoids time.sleep()).
 _UNBAN_LAST_POLL = 0.0
 _FLOOD_DB_LAST_CLEANUP = 0.0
 _FLOOD_DB_LAST_COMMIT = 0.0
+_FLOOD_STRIKES_DB_LAST_CLEANUP = 0.0
 
 
 @hook.regex(r".*")
@@ -105,6 +111,21 @@ def crowdcontrol(
                 break
             _FLOOD_STATE.popitem(last=False)
 
+    def _flood_strikes_cleanup(*, now, idle_ttl, max_keys):
+        global _FLOOD_STRIKES_LAST_CLEANUP
+
+        if now - _FLOOD_STRIKES_LAST_CLEANUP < 60.0:
+            return
+        _FLOOD_STRIKES_LAST_CLEANUP = now
+
+        cutoff = now - float(idle_ttl)
+        while _FLOOD_STRIKES:
+            _, state = next(iter(_FLOOD_STRIKES.items()))
+            _strikes, _last_ts, last_seen = state
+            if last_seen >= cutoff and len(_FLOOD_STRIKES) <= max_keys:
+                break
+            _FLOOD_STRIKES.popitem(last=False)
+
     def _flood_match(rule):
         flood = rule.get("flood")
         if flood is None:
@@ -151,7 +172,7 @@ def crowdcontrol(
         if backend in ("db", "postgres", "postgresql"):
             if db is None:
                 return False, None
-            return _db_flood_match(
+            matched, extra = _db_flood_match(
                 db,
                 server=server,
                 chan=chan,
@@ -160,6 +181,11 @@ def crowdcontrol(
                 rate=float(rate),
                 idle_ttl=float(idle_ttl),
             )
+            if matched:
+                extra.update(
+                    _flood_escalation(rule, backend="db", ident=ident)
+                )
+            return matched, extra
 
         # In-memory backend (default)
         if isinstance(flood, dict):
@@ -198,13 +224,100 @@ def crowdcontrol(
 
         # Provide placeholders for templates.
         approx_hits = int(max(0.0, float(burst) - tokens))
-        return matched, {
+        extra = {
             "flood_backend": "mem",
             "flood_count": count,
             "flood_seconds": seconds,
             "flood_hits": approx_hits,
             "flood_tokens": round(tokens, 2),
             "flood_max_keys": max_keys,
+        }
+
+        if matched:
+            extra.update(_flood_escalation(rule, backend="mem", ident=ident, idle_ttl=idle_ttl, max_keys=max_keys))
+
+        return matched, extra
+
+    def _flood_escalation(rule, *, backend: str, ident: str, idle_ttl: float = 600.0, max_keys: int = 50000):
+        """Compute strike count + action for a flood trigger.
+
+        Default behavior: kick on first strike, ban on second strike (within window).
+        Configure per-rule under flood:
+
+          "flood": {
+            "count": 5, "seconds": 8,
+            "escalate": {"ban_after": 2, "window": 600, "ban_length": 300}
+          }
+        """
+
+        flood = rule.get("flood") or {}
+        if not isinstance(flood, dict):
+            flood = {}
+
+        esc = flood.get("escalate")
+        if not isinstance(esc, dict):
+            esc = {}
+
+        try:
+            ban_after = int(esc.get("ban_after", flood.get("ban_after", 2)))
+        except Exception:
+            ban_after = 2
+        ban_after = max(1, ban_after)
+
+        try:
+            window = float(esc.get("window", flood.get("strike_window", 600)))
+        except Exception:
+            window = 600.0
+        window = max(1.0, window)
+
+        # Ban length used once strikes reach ban_after.
+        try:
+            ban_len = int(esc.get("ban_length", flood.get("ban_length", 300)))
+        except Exception:
+            ban_len = 300
+
+        # Track strikes only for flood-trigger events.
+        now_m = time.monotonic()
+        now_ts = time.time()
+        key = (server, chan, ident)
+
+        if backend == "db" and db is not None:
+            strikes = _db_flood_strike_bump(
+                db,
+                server=server,
+                chan=chan,
+                ident=ident,
+                now_ts=float(now_ts),
+                window=float(window),
+                idle_ttl=float(max(idle_ttl, window * 2)),
+            )
+        else:
+            # Memory strikes: LRU bounded similarly to flood state.
+            _flood_strikes_cleanup(now=now_m, idle_ttl=max(idle_ttl, window * 2), max_keys=max_keys)
+            st = _FLOOD_STRIKES.get(key)
+            if st is None:
+                strikes = 1
+                last_ts = now_ts
+            else:
+                old_strikes, last_ts, _last_seen = st
+                if float(now_ts) - float(last_ts) > float(window):
+                    strikes = 1
+                else:
+                    strikes = int(old_strikes) + 1
+                last_ts = now_ts
+
+            _FLOOD_STRIKES[key] = (int(strikes), float(last_ts), now_m)
+            _FLOOD_STRIKES.move_to_end(key, last=True)
+            while len(_FLOOD_STRIKES) > max_keys:
+                _FLOOD_STRIKES.popitem(last=False)
+
+        action = "ban" if strikes >= ban_after else "kick"
+        return {
+            "flood_strikes": int(strikes),
+            "flood_ban_after": int(ban_after),
+            "flood_strike_window": round(float(window), 2),
+            "flood_action": action,
+            "flood_ban_length": int(ban_len),
         }
 
     for rule in bot.config.get("crowdcontrol", []):
@@ -240,6 +353,21 @@ def crowdcontrol(
         if matched:
             should_kick = rule.get("kick", 0)
             ban_length = rule.get("ban_length", 0)
+
+            # Flood escalation: kick first, ban on repeat.
+            if rule.get("flood") is not None and isinstance(flood_extra, dict) and flood_extra.get("flood_action"):
+                # Always kick on flood actions unless the rule explicitly disables kicking.
+                if should_kick:
+                    should_kick = 1
+
+                if flood_extra.get("flood_action") == "ban":
+                    try:
+                        ban_length = int(flood_extra.get("flood_ban_length") or 0)
+                    except Exception:
+                        ban_length = 0
+                else:
+                    # First strike: ensure no ban.
+                    ban_length = 0
             reason = _format_reason(
                 rule.get("msg"),
                 extra={
@@ -394,6 +522,68 @@ def _db_flood_match(
         "flood_hits": approx_hits,
         "flood_tokens": round(tokens, 2),
     }
+
+
+def _db_init_flood_strikes(db) -> None:
+    db.execute(
+        "create table if not exists crowdcontrol_flood_strikes(" "server, chan, ident, strikes real, last_ts real, last_seen real, " "primary key(server, chan, ident))"
+    )
+
+
+def _db_flood_strikes_cleanup(db, *, server: str, now_ts: float, idle_ttl: float) -> None:
+    global _FLOOD_STRIKES_DB_LAST_CLEANUP
+
+    if now_ts - _FLOOD_STRIKES_DB_LAST_CLEANUP < 60.0:
+        return
+    _FLOOD_STRIKES_DB_LAST_CLEANUP = now_ts
+
+    cutoff = float(now_ts) - float(idle_ttl)
+    db.execute(
+        "delete from crowdcontrol_flood_strikes where server=? and last_seen<?",
+        (server, float(cutoff)),
+    )
+
+
+def _db_flood_strike_bump(
+    db,
+    *,
+    server: str,
+    chan: str,
+    ident: str,
+    now_ts: float,
+    window: float,
+    idle_ttl: float,
+) -> int:
+    _db_init_flood_strikes(db)
+    _db_flood_strikes_cleanup(db, server=server, now_ts=float(now_ts), idle_ttl=float(idle_ttl))
+
+    row = db.execute(
+        "select strikes, last_ts from crowdcontrol_flood_strikes where server=? and chan=? and ident=?",
+        (server, chan.lower(), ident),
+    ).fetchone()
+
+    if row is None:
+        strikes = 1
+        last_ts = float(now_ts)
+    else:
+        try:
+            old_strikes = int(float(row[0]))
+            last_ts = float(row[1])
+        except Exception:
+            old_strikes = 0
+            last_ts = float(now_ts)
+
+        if float(now_ts) - float(last_ts) > float(window):
+            strikes = 1
+        else:
+            strikes = old_strikes + 1
+        last_ts = float(now_ts)
+
+    db.execute(
+        "insert or replace into crowdcontrol_flood_strikes(server, chan, ident, strikes, last_ts, last_seen) values(?,?,?,?,?,?)",
+        (server, chan.lower(), ident, float(strikes), float(last_ts), float(now_ts)),
+    )
+    return int(strikes)
 
 
 @hook.event("*")

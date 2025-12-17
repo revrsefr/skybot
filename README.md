@@ -94,8 +94,12 @@ Optional tuning (defaults are fine):
 
     "crowdcontrol": [
       {
-        "flood": {"count": 5, "seconds": 8},
-        "msg": "Flood in #{channel} (lines>{flood_count} in {flood_seconds}s).",
+        "flood": {
+          "count": 5,
+          "seconds": 8,
+          "escalate": {"ban_after": 2, "window": 600, "ban_length": 300}
+        },
+        "msg": "Flood in #{channel} ({flood_strikes}/{flood_ban_after}). Action={flood_action}.",
         "kick": 1,
         "ban_length": 0
       }
