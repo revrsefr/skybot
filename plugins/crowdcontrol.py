@@ -51,6 +51,7 @@ def crowdcontrol(
     user="",
     host="",
     server="",
+    admin=False,
 ):
     msg_text = inp.group(0)
 
@@ -355,6 +356,10 @@ def crowdcontrol(
                 matched = re.search(rule_re, msg_text) is not None
 
         if matched:
+            # Never take moderation actions against configured admins.
+            if admin:
+                return
+
             should_kick = rule.get("kick", 0)
             ban_length = rule.get("ban_length", 0)
 
