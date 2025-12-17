@@ -52,6 +52,7 @@ Skybot supports a small but useful subset of IRCv3:
 * `chghost` — sends `CHGHOST` messages when a user's user/host changes
 * `extended-join` — JOIN messages may include account/realname fields
 * `invite-notify` — notifies you when you are invited to channels
+* `inspircd.org/stats-tags` — InspIRCd vendor capability adding extra message-tags to some stats output
 * `multi-prefix` — NAMES replies can include multiple user prefixes (e.g. `@+nick`)
 * `userhost-in-names` — NAMES replies may include `nick!user@host` entries
 * `standard-replies` — server may use standardized numeric replies for common errors (varies by server)
@@ -70,7 +71,7 @@ Related (non-CAP) extensions:
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `multi-prefix`, `userhost-in-names`, `standard-replies`, `extended-monitor`, and (if advertised) `chathistory`/`draft/chathistory`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `inspircd.org/stats-tags`, `multi-prefix`, `userhost-in-names`, `standard-replies`, `extended-monitor`, and (if advertised) `chathistory`/`draft/chathistory`.
 
 To override the requested capabilities:
 
@@ -79,7 +80,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
+          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "inspircd.org/stats-tags", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
         }
       }
     }

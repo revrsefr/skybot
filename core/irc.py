@@ -382,6 +382,7 @@ class IRC:
                 "chghost",
                 "extended-join",
                 "invite-notify",
+                "inspircd.org/stats-tags",
                 "multi-prefix",
                 "userhost-in-names",
                 "standard-replies",
