@@ -4,7 +4,7 @@
       "server": "localhost",
       "nick": "Skybot",
       "ircv3": {
-        "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "extended-join", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
+        "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "extended-join", "userhost-in-names", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
       },
       "channels": ["#dev"]
     }
