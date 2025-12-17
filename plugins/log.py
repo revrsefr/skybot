@@ -102,8 +102,19 @@ def log(paraml, input=None, bot=None):
     if beau == "":  # don't log this
         return
 
-    if input.chan:
-        fd = get_log_fd(bot.persist_dir, input.server, input.chan)
+    chan = input.chan
+    # Some server commands don't have a meaningful channel target in param0.
+    # Examples:
+    # - CAP uses '*' as param0
+    # - BATCH uses '+<id>' / '-<id>' as param0
+    # - ERROR uses a free-form trailing param which can contain spaces
+    # Writing these to their own files creates confusing filenames.
+    if chan:
+        if input.command in {"CAP", "BATCH", "ERROR"} or " " in chan or chan == "*":
+            chan = input.server
+
+    if chan:
+        fd = get_log_fd(bot.persist_dir, input.server, chan)
         fd.write(timestamp + " " + beau + "\n")
         fd.flush()
 
