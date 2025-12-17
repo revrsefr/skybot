@@ -81,7 +81,14 @@ Common fields:
 * `kick` — `1` to kick, `0` to only warn
 * `ban_length` — `0` no ban, `-1` ban without unbanning, `>0` ban then unban after N seconds
 
-Temporary ban caveat: when `ban_length > 0`, the plugin currently uses `time.sleep()` before unbanning, which blocks the crowdcontrol handler for that duration. Prefer kick-only (`ban_length: 0`) unless you explicitly want that behavior.
+Temporary bans: when `ban_length > 0`, the plugin schedules an unban in the database and unbans asynchronously (no `time.sleep()` blocking). This means unbans survive bot restarts.
+
+Optional tuning (defaults are fine):
+
+    "crowdcontrol_unban": {
+      "poll_interval": 10,
+      "batch": 50
+    }
 
 ### Flood control example
 

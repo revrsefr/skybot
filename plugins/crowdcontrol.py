@@ -23,6 +23,10 @@ _FLOOD_STATE = OrderedDict()
 _FLOOD_LAST_CLEANUP = 0.0
 
 
+# DB-backed scheduled unbans (survives restarts, avoids time.sleep()).
+_UNBAN_LAST_POLL = 0.0
+
+
 @hook.regex(r".*")
 def crowdcontrol(
     inp,
@@ -31,6 +35,8 @@ def crowdcontrol(
     unban=None,
     reply=None,
     bot=None,
+    db=None,
+    conn=None,
     chan="",
     nick="",
     user="",
@@ -134,7 +140,7 @@ def crowdcontrol(
             max_keys = 50000
             idle_ttl = max(300.0, seconds * 10.0)
 
-        key = (chan, _flood_key())
+        key = (server, chan, _flood_key())
         now = time.monotonic()
 
         # Opportunistic cleanup and LRU bounding.
@@ -223,5 +229,95 @@ def crowdcontrol(
             elif "msg" in rule:
                 reply(reason)
             if ban_length > 0:
-                time.sleep(ban_length)
-                unban(ban_target)
+                # Schedule unban via DB so it survives restarts and doesn't block.
+                try:
+                    if db is not None and server and chan and ban_target:
+                        _db_init_unbans(db)
+                        _db_schedule_unban(
+                            db,
+                            server=server,
+                            chan=chan,
+                            mask=ban_target,
+                            unban_at=int(time.time() + int(ban_length)),
+                        )
+                except Exception:
+                    # Best-effort fallback: keep old behavior if DB isn't available.
+                    try:
+                        time.sleep(ban_length)
+                        unban(ban_target)
+                    except Exception:
+                        pass
+
+
+def _db_init_unbans(db) -> None:
+    db.execute(
+        "create table if not exists crowdcontrol_unbans(" "server, chan, mask, unban_at real, " "primary key(server, chan, mask))"
+    )
+    db.commit()
+
+
+def _db_schedule_unban(db, *, server: str, chan: str, mask: str, unban_at: int) -> None:
+    # Upsert-like behavior across SQLite/Postgres wrapper.
+    db.execute(
+        "insert or replace into crowdcontrol_unbans(server, chan, mask, unban_at) values(?,?,?,?)",
+        (server, chan.lower(), mask, float(unban_at)),
+    )
+    db.commit()
+
+
+def _db_due_unbans(db, *, server: str, now_ts: float, limit: int):
+    return db.execute(
+        "select chan, mask from crowdcontrol_unbans where server=? and unban_at<=? order by unban_at asc limit ?",
+        (server, float(now_ts), int(limit)),
+    ).fetchall()
+
+
+def _db_delete_unban(db, *, server: str, chan: str, mask: str) -> None:
+    db.execute(
+        "delete from crowdcontrol_unbans where server=? and chan=? and mask=?",
+        (server, chan.lower(), mask),
+    )
+
+
+@hook.event("*")
+def crowdcontrol_unban_sweeper(
+    inp,
+    bot=None,
+    db=None,
+    conn=None,
+    server="",
+):
+    # Best-effort poller: unban due masks for this connection.
+    if bot is None or db is None or conn is None or not server:
+        return
+
+    global _UNBAN_LAST_POLL
+    cfg = bot.config.get("crowdcontrol_unban", {}) or {}
+    try:
+        poll_interval = float(cfg.get("poll_interval", 10))
+        batch = int(cfg.get("batch", 50))
+    except Exception:
+        poll_interval = 10.0
+        batch = 50
+
+    now_m = time.monotonic()
+    if now_m - _UNBAN_LAST_POLL < poll_interval:
+        return
+    _UNBAN_LAST_POLL = now_m
+
+    try:
+        _db_init_unbans(db)
+        due = _db_due_unbans(db, server=server, now_ts=time.time(), limit=batch)
+        for chan, mask in due:
+            try:
+                conn.cmd("MODE", [str(chan), "-b", str(mask)])
+                _db_delete_unban(db, server=server, chan=str(chan), mask=str(mask))
+            except Exception:
+                # Keep the row so it can be retried later.
+                continue
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
