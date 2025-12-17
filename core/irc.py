@@ -387,9 +387,6 @@ class IRC:
                 "userhost-in-names",
                 "standard-replies",
                 "extended-monitor",
-                # Chat history capability name differs across networks.
-                "chathistory",
-                "draft/chathistory",
                 # Some networks use draft names for message IDs.
                 "msgid",
                 "draft/msgid",

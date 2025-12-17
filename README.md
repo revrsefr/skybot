@@ -71,7 +71,9 @@ Related (non-CAP) extensions:
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `inspircd.org/stats-tags`, `multi-prefix`, `userhost-in-names`, `standard-replies`, `extended-monitor`, and (if advertised) `chathistory`/`draft/chathistory`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `inspircd.org/stats-tags`, `multi-prefix`, `userhost-in-names`, `standard-replies`, and `extended-monitor`.
+
+Note: `chathistory` / `draft/chathistory` is supported by Skybot but is intentionally **opt-in** (some servers may auto-send history on join when the capability is enabled). Add it to `ircv3.caps` only if you want it.
 
 To override the requested capabilities:
 
@@ -80,7 +82,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "inspircd.org/stats-tags", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
+          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "inspircd.org/stats-tags", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "msgid", "draft/msgid"]
         }
       }
     }
