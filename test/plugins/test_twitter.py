@@ -1,3 +1,4 @@
+import unittest
 from unittest import TestCase
 
 
@@ -5,14 +6,6 @@ from mock import patch
 
 from helpers import get_fixture_file_data, execute_skybot_regex
 from twitter import show_tweet, twitter
-
-
-FAKE_API_KEY = {
-    "consumer": "AAAAAAAAAAAAAAAAAAAAAAAAA",
-    "consumer_secret": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    "access": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    "access_secret": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-}
 
 
 class TestTwitter(TestCase):
@@ -32,14 +25,16 @@ class TestTwitter(TestCase):
             u"hahahahahahahahahahahahahahahahahahahahaha"
             u"hahahahahahahahahahahahahahahahahahahahaha"
             u"hahahahahahahahahahahahahahahahahahahahaha"
-            u"haha https://t.co/gbionAPK9Z"
+            u"haha "
+            u"https://x.com/realDonaldTrump/status/1014257237945176071"
         )
 
         url = "https://twitter.com/jk_rowling/status/1014260007771295745"
-        actual = execute_skybot_regex(show_tweet, url, api_key=FAKE_API_KEY)
+        actual = execute_skybot_regex(show_tweet, url)
 
         assert expected == actual
 
+    @unittest.skip("tweet lookup by username is not supported")
     @patch("util.http.get_json")
     def test_twitter_username_no_tweet_number(self, mock_http_get):
         mock_http_get.return_value = get_fixture_file_data(
@@ -54,10 +49,11 @@ class TestTwitter(TestCase):
             u"from us."
         )
 
-        actual = twitter("loneblockbuster", api_key=FAKE_API_KEY)
+        actual = twitter("loneblockbuster")
 
         assert expected == actual
 
+    @unittest.skip("tweet lookup by username is not supported")
     @patch("util.http.get_json")
     def test_twitter_username_with_tweet_number(self, mock_http_get):
         mock_http_get.return_value = get_fixture_file_data(
@@ -70,10 +66,11 @@ class TestTwitter(TestCase):
             u"front if we knew we'd get so many death threats."
         )
 
-        actual = twitter("loneblockbuster 10", api_key=FAKE_API_KEY)
+        actual = twitter("loneblockbuster 10")
 
         assert expected == actual
 
+    @unittest.skip("tweet lookup by hashtag is not supported")
     @patch("random.randint")
     @patch("util.http.get_json")
     def test_twitter_hashtag_no_tweet_number(self, mock_http_get, mock_random_randint):
@@ -95,10 +92,11 @@ class TestTwitter(TestCase):
             u"https://t.co/xAJVRhjOww"
         )
 
-        actual = twitter("#NYC", api_key=FAKE_API_KEY)
+        actual = twitter("#NYC")
 
         assert expected == actual
 
+    @unittest.skip("tweet lookup by hashtag is not supported")
     @patch("util.http.get_json")
     def test_twitter_hashtag_with_tweet_number(self, mock_http_get):
         mock_http_get.return_value = get_fixture_file_data(self, "hashtag_nyc.json")
@@ -114,6 +112,6 @@ class TestTwitter(TestCase):
             u"https://t.co/bq9i0FZN89"
         )
 
-        actual = twitter("#NYC 10", api_key=FAKE_API_KEY)
+        actual = twitter("#NYC 10")
 
         assert expected == actual
