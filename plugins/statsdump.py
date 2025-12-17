@@ -44,8 +44,8 @@ def _parse_args(inp: str) -> tuple[str, int]:
 
 
 @hook.command("statsdump")
-def statsdump(inp, conn=None, nick=None, notice=None, admin=None, **_):
-    letter, limit = _parse_args(inp)
+def statsdump(text, conn=None, nick=None, notice=None, admin=None):
+    letter, limit = _parse_args(text)
 
     if not admin:
         notice("statsdump: admin-only")
@@ -73,8 +73,11 @@ def statsdump(inp, conn=None, nick=None, notice=None, admin=None, **_):
 
 
 @hook.event("*")
-def _statsdump_events(inp, **_):
-    conn = inp.conn
+def _statsdump_events(paraml, input=None):
+    if input is None:
+        return
+
+    conn = input.conn
     state = _state.get(conn)
     if not state:
         return
@@ -86,21 +89,21 @@ def _statsdump_events(inp, **_):
         return
 
     # Stats replies are numerics. End of STATS is typically 219.
-    if not inp.command.isdigit():
+    if not input.command.isdigit():
         return
 
     # Only dump lines that actually have tags to avoid noise.
-    if inp.tags:
+    if input.tags:
         state["seen"] += 1
         state["tagged"] += 1
         _notice(
             conn,
             state["target"],
-            f"STATS {state['letter']} {inp.command} tags={inp.tags} params={inp.paraml}",
+            f"STATS {state['letter']} {input.command} tags={input.tags} params={input.paraml}",
         )
 
     # Stop conditions:
-    if inp.command == "219":
+    if input.command == "219":
         _notice(
             conn,
             state["target"],
