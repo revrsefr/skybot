@@ -43,9 +43,13 @@ def _parse_args(inp: str) -> tuple[str, int]:
     return letter, limit
 
 
-@hook.command("statsdump", adminonly=True)
-def statsdump(inp, conn=None, nick=None, notice=None, **_):
+@hook.command("statsdump")
+def statsdump(inp, conn=None, nick=None, notice=None, admin=None, **_):
     letter, limit = _parse_args(inp)
+
+    if not admin:
+        notice("statsdump: admin-only")
+        return
 
     if "inspircd.org/stats-tags" not in conn.enabled_caps:
         notice(
