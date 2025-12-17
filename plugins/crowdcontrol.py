@@ -71,6 +71,15 @@ def crowdcontrol(
             return f"{nick}!{user}@{host}".strip("!@")
         return nick
 
+    def _ban_mask():
+        # core/main.py defaults to using only `host`, but most IRCds set bans as masks
+        # (e.g. *!*@host). If we ban with a mask, we must unban with the same mask.
+        if host:
+            return f"*!*@{host}"
+        if user:
+            return f"*!{user}@*"
+        return nick
+
     def _flood_cleanup(*, now, idle_ttl, max_keys):
         global _FLOOD_LAST_CLEANUP
 
@@ -207,11 +216,12 @@ def crowdcontrol(
                 },
             )
             if ban_length != 0:
-                ban()
+                ban_target = _ban_mask()
+                ban(ban_target)
             if should_kick:
                 kick(reason=reason)
             elif "msg" in rule:
                 reply(reason)
             if ban_length > 0:
                 time.sleep(ban_length)
-                unban()
+                unban(ban_target)
