@@ -26,6 +26,10 @@ _DEFAULT_LIMIT = 25
 _state: "weakref.WeakKeyDictionary[object, dict]" = weakref.WeakKeyDictionary()
 
 
+def _is_active(state: dict) -> bool:
+    return (time.time() - state.get("started", 0.0)) <= _MAX_SECONDS
+
+
 def _notice(conn, target: str, msg: str) -> None:
     conn.cmd("NOTICE", [target, msg])
 
@@ -82,6 +86,14 @@ def statsdump(text, conn=None, nick=None, notice=None, admin=None):
         )
         return
 
+    existing = _state.get(conn)
+    if existing and _is_active(existing):
+        notice("statsdump already running; wait a moment and try again.")
+        return
+
+    # If the user asks for a tiny limit, keep output minimal.
+    quiet = limit <= 2
+
     _state[conn] = {
         "target": nick,
         "letter": letter,
@@ -89,11 +101,13 @@ def statsdump(text, conn=None, nick=None, notice=None, admin=None):
         "seen": 0,
         "tagged": 0,
         "started": time.time(),
+        "quiet": quiet,
     }
 
     # STATS reply numerics will be picked up by the event hook below.
     conn.cmd("STATS", [letter])
-    notice(f"STATS {letter}: requested (showing tagged lines only, limit={limit}).")
+    if not quiet:
+        notice(f"STATS {letter}: requested (showing tagged lines only, limit={limit}).")
 
 
 @hook.event("*")
@@ -116,9 +130,24 @@ def _statsdump_events(paraml, input=None):
     if not input.command.isdigit():
         return
 
+    # End of STATS report (don't print it; it's just a terminator).
+    if input.command == "219":
+        if state["tagged"] == 0 and not state.get("quiet"):
+            _notice(conn, state["target"], "statsdump: no tagged lines seen.")
+        elif state["tagged"] == 0 and state.get("quiet"):
+            _notice(conn, state["target"], "statsdump: no tagged lines seen.")
+
+        if not state.get("quiet"):
+            _notice(
+                conn,
+                state["target"],
+                f"statsdump done (tagged lines: {state['tagged']}).",
+            )
+        _state.pop(conn, None)
+        return
+
     # Only dump lines that actually have tags to avoid noise.
     if input.tags:
-        state["seen"] += 1
         state["tagged"] += 1
 
         message = _stats_message(input.paraml)
@@ -135,22 +164,14 @@ def _statsdump_events(paraml, input=None):
             message = "Uptime: " + message[len("Server up ") :]
 
         if message:
+            state["seen"] += 1
             _notice(conn, state["target"], f"STATS {state['letter']}: {message}{tags_display}")
 
-    # Stop conditions:
-    if input.command == "219":
-        _notice(
-            conn,
-            state["target"],
-            f"statsdump done (tagged lines: {state['tagged']}).",
-        )
-        _state.pop(conn, None)
-        return
-
     if state["seen"] >= state["limit"]:
-        _notice(
-            conn,
-            state["target"],
-            f"statsdump hit limit (tagged_lines={state['tagged']}); stopping.",
-        )
+        if not state.get("quiet"):
+            _notice(
+                conn,
+                state["target"],
+                f"statsdump hit limit (tagged lines: {state['tagged']}); stopping.",
+            )
         _state.pop(conn, None)
