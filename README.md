@@ -52,6 +52,7 @@ Skybot supports a small but useful subset of IRCv3:
 * `extended-join` — JOIN messages may include account/realname fields
 * `userhost-in-names` — NAMES replies may include `nick!user@host` entries
 * `standard-replies` — server may use standardized numeric replies for common errors (varies by server)
+* `extended-monitor` — extends MONITOR to send metadata change notifications (away/account/chghost/setname) for monitored nicks
 * `chathistory` / `draft/chathistory` — allows requesting chat history via the `CHATHISTORY` command (server support varies)
 * `msgid` — when supported, servers attach a `msgid` tag to messages (often delivered via `message-tags`)
 
@@ -65,7 +66,7 @@ Related (non-CAP) extensions:
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `extended-join`, `userhost-in-names`, `standard-replies`, and (if advertised) `chathistory`/`draft/chathistory`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `extended-join`, `userhost-in-names`, `standard-replies`, `extended-monitor`, and (if advertised) `chathistory`/`draft/chathistory`.
 
 To override the requested capabilities:
 
@@ -74,7 +75,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "extended-join", "userhost-in-names", "standard-replies", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
+          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "extended-join", "userhost-in-names", "standard-replies", "extended-monitor", "chathistory", "draft/chathistory", "msgid", "draft/msgid"]
         }
       }
     }

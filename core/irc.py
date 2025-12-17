@@ -360,6 +360,7 @@ class IRC:
                 "extended-join",
                 "userhost-in-names",
                 "standard-replies",
+                "extended-monitor",
                 # Chat history capability name differs across networks.
                 "chathistory",
                 "draft/chathistory",
