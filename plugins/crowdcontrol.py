@@ -6,6 +6,7 @@ import time
 from collections import OrderedDict
 from util import hook
 from util.badness import badness
+from util import crowdcontrol_db
 
 # Use "crowdcontrol" array in config
 # syntax
@@ -30,9 +31,9 @@ _FLOOD_STRIKES_LAST_CLEANUP = 0.0
 
 # DB-backed scheduled unbans (survives restarts, avoids time.sleep()).
 _UNBAN_LAST_POLL = 0.0
-_FLOOD_DB_LAST_CLEANUP = 0.0
-_FLOOD_DB_LAST_COMMIT = 0.0
-_FLOOD_STRIKES_DB_LAST_CLEANUP = 0.0
+_FLOOD_DB_CLEANUP_STATE = {"t": 0.0}
+_FLOOD_DB_COMMIT_STATE = {"t": 0.0}
+_FLOOD_STRIKES_DB_CLEANUP_STATE = {"t": 0.0}
 
 
 @hook.regex(r".*")
@@ -172,7 +173,7 @@ def crowdcontrol(
         if backend in ("db", "postgres", "postgresql"):
             if db is None:
                 return False, None
-            matched, extra = _db_flood_match(
+            matched, extra = crowdcontrol_db.flood_match(
                 db,
                 server=server,
                 chan=chan,
@@ -180,6 +181,8 @@ def crowdcontrol(
                 burst=float(burst),
                 rate=float(rate),
                 idle_ttl=float(idle_ttl),
+                last_cleanup_state=_FLOOD_DB_CLEANUP_STATE,
+                last_commit_state=_FLOOD_DB_COMMIT_STATE,
             )
             if matched:
                 extra.update(
@@ -282,7 +285,7 @@ def crowdcontrol(
         key = (server, chan, ident)
 
         if backend == "db" and db is not None:
-            strikes = _db_flood_strike_bump(
+            strikes = crowdcontrol_db.flood_strike_bump(
                 db,
                 server=server,
                 chan=chan,
@@ -290,6 +293,7 @@ def crowdcontrol(
                 now_ts=float(now_ts),
                 window=float(window),
                 idle_ttl=float(max(idle_ttl, window * 2)),
+                last_cleanup_state=_FLOOD_STRIKES_DB_CLEANUP_STATE,
             )
         else:
             # Memory strikes: LRU bounded similarly to flood state.
@@ -388,8 +392,8 @@ def crowdcontrol(
                 # Schedule unban via DB so it survives restarts and doesn't block.
                 try:
                     if db is not None and server and chan and ban_target:
-                        _db_init_unbans(db)
-                        _db_schedule_unban(
+                        crowdcontrol_db.init_unbans(db)
+                        crowdcontrol_db.schedule_unban(
                             db,
                             server=server,
                             chan=chan,
@@ -403,187 +407,6 @@ def crowdcontrol(
                         unban(ban_target)
                     except Exception:
                         pass
-
-
-def _db_init_unbans(db) -> None:
-    db.execute(
-        "create table if not exists crowdcontrol_unbans(" "server, chan, mask, unban_at real, " "primary key(server, chan, mask))"
-    )
-    db.commit()
-
-
-def _db_schedule_unban(db, *, server: str, chan: str, mask: str, unban_at: int) -> None:
-    # Upsert-like behavior across SQLite/Postgres wrapper.
-    db.execute(
-        "insert or replace into crowdcontrol_unbans(server, chan, mask, unban_at) values(?,?,?,?)",
-        (server, chan.lower(), mask, float(unban_at)),
-    )
-    db.commit()
-
-
-def _db_due_unbans(db, *, server: str, now_ts: float, limit: int):
-    return db.execute(
-        "select chan, mask from crowdcontrol_unbans where server=? and unban_at<=? order by unban_at asc limit ?",
-        (server, float(now_ts), int(limit)),
-    ).fetchall()
-
-
-def _db_delete_unban(db, *, server: str, chan: str, mask: str) -> None:
-    db.execute(
-        "delete from crowdcontrol_unbans where server=? and chan=? and mask=?",
-        (server, chan.lower(), mask),
-    )
-
-
-def _db_init_flood(db) -> None:
-    db.execute(
-        "create table if not exists crowdcontrol_flood(" "server, chan, ident, tokens real, last_ts real, last_seen real, " "primary key(server, chan, ident))"
-    )
-
-
-def _db_flood_cleanup(db, *, server: str, now_ts: float, idle_ttl: float) -> None:
-    global _FLOOD_DB_LAST_CLEANUP
-
-    # Run at most once per minute per process.
-    if now_ts - _FLOOD_DB_LAST_CLEANUP < 60.0:
-        return
-    _FLOOD_DB_LAST_CLEANUP = now_ts
-
-    cutoff = float(now_ts) - float(idle_ttl)
-    db.execute(
-        "delete from crowdcontrol_flood where server=? and last_seen<?",
-        (server, float(cutoff)),
-    )
-
-
-def _db_flood_commit_maybe(db, *, now_m: float) -> None:
-    global _FLOOD_DB_LAST_COMMIT
-    if now_m - _FLOOD_DB_LAST_COMMIT < 1.0:
-        return
-    _FLOOD_DB_LAST_COMMIT = now_m
-    db.commit()
-
-
-def _db_flood_match(
-    db,
-    *,
-    server: str,
-    chan: str,
-    ident: str,
-    burst: float,
-    rate: float,
-    idle_ttl: float,
-):
-    # DB-backed token bucket. This avoids in-process per-user memory at the cost of
-    # a DB read+write per message.
-    _db_init_flood(db)
-
-    now_m = time.monotonic()
-    now_ts = time.time()
-    _db_flood_cleanup(db, server=server, now_ts=now_ts, idle_ttl=idle_ttl)
-
-    row = db.execute(
-        "select tokens, last_ts from crowdcontrol_flood where server=? and chan=? and ident=?",
-        (server, chan.lower(), ident),
-    ).fetchone()
-
-    if row is None:
-        tokens = float(burst)
-        last_ts = float(now_m)
-    else:
-        try:
-            tokens = float(row[0])
-            last_ts = float(row[1])
-        except Exception:
-            tokens = float(burst)
-            last_ts = float(now_m)
-
-    refill = (float(now_m) - float(last_ts)) * float(rate)
-    tokens = min(float(burst), tokens + refill)
-    last_ts = float(now_m)
-
-    tokens -= 1.0
-    matched = tokens < 0.0
-    if matched:
-        tokens = float(burst) - 1.0
-
-    # Upsert/update state.
-    db.execute(
-        "insert or replace into crowdcontrol_flood(server, chan, ident, tokens, last_ts, last_seen) values(?,?,?,?,?,?)",
-        (server, chan.lower(), ident, float(tokens), float(last_ts), float(now_ts)),
-    )
-    _db_flood_commit_maybe(db, now_m=float(now_m))
-
-    approx_hits = int(max(0.0, float(burst) - tokens))
-    return matched, {
-        "flood_backend": "db",
-        "flood_count": int(burst),
-        "flood_seconds": round(float(burst) / float(rate), 2) if rate > 0 else 0,
-        "flood_hits": approx_hits,
-        "flood_tokens": round(tokens, 2),
-    }
-
-
-def _db_init_flood_strikes(db) -> None:
-    db.execute(
-        "create table if not exists crowdcontrol_flood_strikes(" "server, chan, ident, strikes real, last_ts real, last_seen real, " "primary key(server, chan, ident))"
-    )
-
-
-def _db_flood_strikes_cleanup(db, *, server: str, now_ts: float, idle_ttl: float) -> None:
-    global _FLOOD_STRIKES_DB_LAST_CLEANUP
-
-    if now_ts - _FLOOD_STRIKES_DB_LAST_CLEANUP < 60.0:
-        return
-    _FLOOD_STRIKES_DB_LAST_CLEANUP = now_ts
-
-    cutoff = float(now_ts) - float(idle_ttl)
-    db.execute(
-        "delete from crowdcontrol_flood_strikes where server=? and last_seen<?",
-        (server, float(cutoff)),
-    )
-
-
-def _db_flood_strike_bump(
-    db,
-    *,
-    server: str,
-    chan: str,
-    ident: str,
-    now_ts: float,
-    window: float,
-    idle_ttl: float,
-) -> int:
-    _db_init_flood_strikes(db)
-    _db_flood_strikes_cleanup(db, server=server, now_ts=float(now_ts), idle_ttl=float(idle_ttl))
-
-    row = db.execute(
-        "select strikes, last_ts from crowdcontrol_flood_strikes where server=? and chan=? and ident=?",
-        (server, chan.lower(), ident),
-    ).fetchone()
-
-    if row is None:
-        strikes = 1
-        last_ts = float(now_ts)
-    else:
-        try:
-            old_strikes = int(float(row[0]))
-            last_ts = float(row[1])
-        except Exception:
-            old_strikes = 0
-            last_ts = float(now_ts)
-
-        if float(now_ts) - float(last_ts) > float(window):
-            strikes = 1
-        else:
-            strikes = old_strikes + 1
-        last_ts = float(now_ts)
-
-    db.execute(
-        "insert or replace into crowdcontrol_flood_strikes(server, chan, ident, strikes, last_ts, last_seen) values(?,?,?,?,?,?)",
-        (server, chan.lower(), ident, float(strikes), float(last_ts), float(now_ts)),
-    )
-    return int(strikes)
 
 
 @hook.event("*")
@@ -613,12 +436,12 @@ def crowdcontrol_unban_sweeper(
     _UNBAN_LAST_POLL = now_m
 
     try:
-        _db_init_unbans(db)
-        due = _db_due_unbans(db, server=server, now_ts=time.time(), limit=batch)
+        crowdcontrol_db.init_unbans(db)
+        due = crowdcontrol_db.due_unbans(db, server=server, now_ts=time.time(), limit=batch)
         for chan, mask in due:
             try:
                 conn.cmd("MODE", [str(chan), "-b", str(mask)])
-                _db_delete_unban(db, server=server, chan=str(chan), mask=str(mask))
+                crowdcontrol_db.delete_unban(db, server=server, chan=str(chan), mask=str(mask))
             except Exception:
                 # Keep the row so it can be retried later.
                 continue
