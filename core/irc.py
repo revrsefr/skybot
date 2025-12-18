@@ -409,12 +409,26 @@ class IRC:
                 "standard-replies",
                 "extended-monitor",
                 # Work-in-progress IRCv3 multiline messages.
-                "+draft/multiline",
+                "draft/multiline",
+                # Opt out of implicit NAMES on JOIN.
+                "draft/no-implicit-names",
                 # Some networks use draft names for message IDs.
                 "msgid",
-                "+draft/msgid",
+                "draft/msgid",
             ]
-        self.requested_caps = set(caps)
+        # Some configs historically used a leading '+' to indicate an optional
+        # capability. CAP LS/ACK tokens never include '+', so normalize.
+        normalized_caps: set[str] = set()
+        for cap in caps:
+            if not isinstance(cap, str):
+                continue
+            cap = cap.strip()
+            if not cap:
+                continue
+            if cap.startswith("+"):
+                cap = cap[1:]
+            normalized_caps.add(cap)
+        self.requested_caps = normalized_caps
 
         if self.conn is not None:
             self.join_channels()
