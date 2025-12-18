@@ -228,6 +228,63 @@ def test_make_command_re():
 
 
 def main(conn, out):
+    # --- Ignore server-driven CHATHISTORY batches ---
+    # Some networks send a CHATHISTORY batch automatically on join.
+    # We don't want the bot to react to (or log) history on connect.
+    #
+    # Behavior is configurable per connection:
+    # - allow_chathistory_channels: list of targets allowed to pass through
+    # - ignore_chathistory_channels: list of targets to suppress
+    # - ignore_chathistory_batches: global boolean (default True)
+    try:
+        command = out[2]
+        paraml = out[7]
+        tags = out[9]
+    except Exception:
+        command = None
+        paraml = None
+        tags = {}
+
+    def _should_ignore_chathistory_target(target: str) -> bool:
+        target_l = (target or "").lower()
+        allow = getattr(conn, "allow_chathistory_channels", []) or []
+        if allow:
+            return target_l not in allow
+
+        ignore = getattr(conn, "ignore_chathistory_channels", []) or []
+        if ignore:
+            return target_l in ignore
+
+        return bool(getattr(conn, "ignore_chathistory_batches", True))
+
+    if not hasattr(conn, "_ignore_batches"):
+        # batch_id -> (batch_type, target)
+        conn._ignore_batches = {}
+
+    if command == "BATCH" and paraml:
+        ref = paraml[0]
+        if ref.startswith("+") and len(paraml) >= 2:
+            batch_id = ref[1:]
+            batch_type = paraml[1]
+            if batch_type == "chathistory":
+                target = paraml[2] if len(paraml) >= 3 else ""
+                if _should_ignore_chathistory_target(target):
+                    conn._ignore_batches[batch_id] = (batch_type, target)
+                    return
+        elif ref.startswith("-"):
+            batch_id = ref[1:]
+            batch = conn._ignore_batches.pop(batch_id, None)
+            if batch and batch[0] == "chathistory":
+                return
+
+    batch_id = None
+    if isinstance(tags, dict):
+        batch_id = tags.get("batch")
+    if batch_id:
+        batch = conn._ignore_batches.get(batch_id)
+        if batch and batch[0] == "chathistory":
+            return
+
     inp = Input(conn, *out)
 
     # EVENTS

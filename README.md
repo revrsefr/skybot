@@ -75,6 +75,14 @@ Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labele
 
 Note: `chathistory` / `draft/chathistory` is supported by Skybot but is intentionally **opt-in** (some servers may auto-send history on join when the capability is enabled). Add it to `ircv3.caps` only if you want it.
 
+Some networks may still send server-driven `BATCH ... chathistory` on join even when you don't request the capability. Skybot suppresses these batches by default so plugins/logging don't treat history as new messages.
+
+Per connection you can control this in `config.json`:
+
+* `ignore_chathistory_batches` (bool, default `true`): suppress all `chathistory` batches.
+* `ignore_chathistory_channels` (list of strings): if set, suppress only these targets.
+* `allow_chathistory_channels` (list of strings): if set, allow only these targets (everything else suppressed).
+
 To override the requested capabilities:
 
     "connections": {

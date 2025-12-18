@@ -364,6 +364,18 @@ class IRC:
         self.admins = conf.get("admins", [])
         self.censored_strings = conf.get("censored_strings", [])
 
+        # CHATHISTORY suppression (server-driven history on join)
+        # - If allow_chathistory_channels is non-empty: only those targets are allowed.
+        # - Else if ignore_chathistory_channels is non-empty: only those targets are suppressed.
+        # - Else: ignore_chathistory_batches boolean controls global suppression.
+        self.ignore_chathistory_batches = bool(conf.get("ignore_chathistory_batches", True))
+        self.ignore_chathistory_channels = [
+            c.lower() for c in (conf.get("ignore_chathistory_channels", []) or [])
+        ]
+        self.allow_chathistory_channels = [
+            c.lower() for c in (conf.get("allow_chathistory_channels", []) or [])
+        ]
+
         ircv3 = conf.get("ircv3", {}) or {}
         caps = ircv3.get("caps")
         if caps is None:

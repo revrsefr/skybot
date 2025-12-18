@@ -6,7 +6,10 @@
       "ircv3": {
         "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "inspircd.org/stats-tags", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "msgid", "draft/msgid"]
       },
-      "channels": ["#dev"]
+      "channels": ["#dev"],
+      "ignore_chathistory_batches": true,
+      "ignore_chathistory_channels": ["#dev"],
+      "allow_chathistory_channels": []
     }
   },
   "prefix": ".",
