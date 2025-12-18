@@ -389,6 +389,7 @@ class IRC:
                 "cap-notify",
                 "labeled-response",
                 "server-time",
+                "echo-message",
                 "account-tag",
                 "account-notify",
                 "chghost",

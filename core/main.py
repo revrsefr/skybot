@@ -240,10 +240,24 @@ def main(conn, out):
         command = out[2]
         paraml = out[7]
         tags = out[9]
+        nick = out[4]
     except Exception:
         command = None
         paraml = None
         tags = {}
+        nick = ""
+
+    # --- IRCv3 echo-message ---
+    # If we negotiated echo-message, the server will send our own PRIVMSG/NOTICE
+    # back to us. Treating those as inbound messages causes double-processing
+    # (and can trigger command loops if the bot talks with its command prefix).
+    if (
+        command in {"PRIVMSG", "NOTICE"}
+        and nick
+        and nick.lower() == conn.nick.lower()
+        and "echo-message" in getattr(conn, "enabled_caps", set())
+    ):
+        return
 
     def _should_ignore_chathistory_target(target: str) -> bool:
         target_l = (target or "").lower()
