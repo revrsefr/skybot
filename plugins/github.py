@@ -173,6 +173,38 @@ def _compare_commits(repo_full, before, head, token=None):
     return commits
 
 
+def _extract_event_url(payload):
+    """Best-effort URL extraction for unknown event types."""
+
+    if not isinstance(payload, dict):
+        return None
+
+    # Common nested objects that often carry html_url
+    for key in (
+        "comment",
+        "review",
+        "pull_request",
+        "issue",
+        "release",
+        "forkee",
+    ):
+        obj = payload.get(key) or {}
+        if isinstance(obj, dict):
+            url = obj.get("html_url")
+            if url:
+                return url
+
+    # Some payloads put a URL at the top level.
+    url = payload.get("html_url")
+    if url:
+        return url
+    url = payload.get("url")
+    if url and isinstance(url, str) and url.startswith("https://"):
+        return url
+
+    return None
+
+
 def format_event(event, token=None):
     """Format a GitHub Events API item into a short IRC-friendly line."""
 
@@ -274,6 +306,49 @@ def format_event(event, token=None):
             bits.append(url)
         return " ".join(bits)
 
+    if etype == "PullRequestReviewEvent":
+        action = payload.get("action") or "reviewed"
+        pr = payload.get("pull_request") or {}
+        number = pr.get("number") or payload.get("pull_request_number")
+        title = (pr.get("title") or "").strip()
+        review = payload.get("review") or {}
+        url = (review.get("html_url") if isinstance(review, dict) else None) or pr.get(
+            "html_url"
+        )
+        state = None
+        if isinstance(review, dict):
+            state = (review.get("state") or "").lower() or None
+        bits = [f"[{_repo_short(repo)}] {actor} {action} PR review"]
+        if number is not None:
+            bits[-1] += f" #{number}"
+        if state:
+            bits.append(f"({state})")
+        if title:
+            bits.append(f"\"{title}\"")
+        bits.append(f"in {repo}")
+        if url:
+            bits.append(url)
+        return " ".join(bits)
+
+    if etype == "PullRequestReviewCommentEvent":
+        action = payload.get("action") or "commented"
+        pr = payload.get("pull_request") or {}
+        number = pr.get("number") or payload.get("pull_request_number")
+        title = (pr.get("title") or "").strip()
+        comment = payload.get("comment") or {}
+        url = (comment.get("html_url") if isinstance(comment, dict) else None) or pr.get(
+            "html_url"
+        )
+        bits = [f"[{_repo_short(repo)}] {actor} {action} on PR review"]
+        if number is not None:
+            bits[-1] += f" #{number}"
+        if title:
+            bits.append(f"\"{title}\"")
+        bits.append(f"in {repo}")
+        if url:
+            bits.append(url)
+        return " ".join(bits)
+
     if etype == "IssuesEvent":
         action = payload.get("action") or "updated"
         issue = payload.get("issue") or {}
@@ -350,6 +425,9 @@ def format_event(event, token=None):
         return f"[{_repo_short(repo)}] {actor} {action} {repo}"
 
     # Fallback
+    url = _extract_event_url(payload)
+    if url:
+        return f"[{_repo_short(repo)}] {actor} did {etype or 'something'} in {repo} {url}"
     return f"[{_repo_short(repo)}] {actor} did {etype or 'something'} in {repo}"
 
 
