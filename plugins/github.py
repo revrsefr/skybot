@@ -229,6 +229,30 @@ def _extract_event_url(payload):
     return None
 
 
+def _pr_html_url(repo_full, number):
+    if not repo_full or number is None:
+        return None
+    try:
+        n = int(number)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    return f"https://github.com/{repo_full}/pull/{n}"
+
+
+def _issue_html_url(repo_full, number):
+    if not repo_full or number is None:
+        return None
+    try:
+        n = int(number)
+    except Exception:
+        return None
+    if n <= 0:
+        return None
+    return f"https://github.com/{repo_full}/issues/{n}"
+
+
 def format_event(event, token=None):
     """Format a GitHub Events API item into a short IRC-friendly line."""
 
@@ -319,7 +343,7 @@ def format_event(event, token=None):
         pr = payload.get("pull_request") or {}
         number = pr.get("number") or payload.get("number")
         title = (pr.get("title") or "").strip()
-        url = pr.get("html_url")
+        url = pr.get("html_url") or _pr_html_url(repo, number)
         bits = [f"[{_repo_short(repo)}] {actor} {action} PR"]
         if number is not None:
             bits[-1] += f" #{number}"
@@ -339,6 +363,8 @@ def format_event(event, token=None):
         url = (review.get("html_url") if isinstance(review, dict) else None) or pr.get(
             "html_url"
         )
+        if not url:
+            url = _pr_html_url(repo, number)
         state = None
         if isinstance(review, dict):
             state = (review.get("state") or "").lower() or None
@@ -363,6 +389,8 @@ def format_event(event, token=None):
         url = (comment.get("html_url") if isinstance(comment, dict) else None) or pr.get(
             "html_url"
         )
+        if not url:
+            url = _pr_html_url(repo, number)
         bits = [f"[{_repo_short(repo)}] {actor} {action} on PR review"]
         if number is not None:
             bits[-1] += f" #{number}"
@@ -378,7 +406,7 @@ def format_event(event, token=None):
         issue = payload.get("issue") or {}
         number = issue.get("number")
         title = (issue.get("title") or "").strip()
-        url = issue.get("html_url")
+        url = issue.get("html_url") or _issue_html_url(repo, number)
         bits = [f"[{_repo_short(repo)}] {actor} {action} issue"]
         if number is not None:
             bits[-1] += f" #{number}"
@@ -393,7 +421,11 @@ def format_event(event, token=None):
         action = payload.get("action") or "commented"
         issue = payload.get("issue") or {}
         number = issue.get("number")
-        url = (payload.get("comment") or {}).get("html_url") or issue.get("html_url")
+        url = (
+            (payload.get("comment") or {}).get("html_url")
+            or issue.get("html_url")
+            or _issue_html_url(repo, number)
+        )
         bits = [f"[{_repo_short(repo)}] {actor} {action} on issue"]
         if number is not None:
             bits[-1] += f" #{number}"
