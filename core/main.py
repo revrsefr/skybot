@@ -247,6 +247,67 @@ def main(conn, out):
         tags = {}
         nick = ""
 
+    # --- IRCv3 draft/multiline ---
+    # Buffer multiline batches and only dispatch once the batch is complete.
+    if not hasattr(conn, "_multiline_batches"):
+        # batch_id -> {"target": str, "open_tags": dict, "first_out": list|None, "lines": [(str,bool)], "cmd": str|None, "line_tags": dict|None}
+        conn._multiline_batches = {}
+
+    if command == "BATCH" and paraml:
+        ref = paraml[0]
+        if ref.startswith("+") and len(paraml) >= 3:
+            batch_id = ref[1:]
+            batch_type = paraml[1]
+            if batch_type == "+draft/multiline":
+                batch_target = paraml[2]
+                conn._multiline_batches[batch_id] = {
+                    "target": batch_target,
+                    "open_tags": tags if isinstance(tags, dict) else {},
+                    "first_out": None,
+                    "cmd": None,
+                    "line_tags": None,
+                    "lines": [],
+                }
+                return
+        elif ref.startswith("-"):
+            batch_id = ref[1:]
+            mb = conn._multiline_batches.pop(batch_id, None)
+            if mb and mb.get("first_out") and mb.get("lines"):
+                combined = ""
+                for i, (line, concat) in enumerate(mb["lines"]):
+                    if i == 0:
+                        combined = line
+                    else:
+                        combined += ("" if concat else "\n") + line
+
+                first_out = list(mb["first_out"])
+                batch_target = mb.get("target") or (first_out[7][0] if first_out[7] else "")
+                cmd = mb.get("cmd") or first_out[2]
+
+                # Merge tags: open BATCH tags (msgid/account/label/etc) + first line tags.
+                merged_tags = {}
+                open_tags = mb.get("open_tags") or {}
+                if isinstance(open_tags, dict):
+                    merged_tags.update(open_tags)
+                line_tags = mb.get("line_tags") or {}
+                if isinstance(line_tags, dict):
+                    merged_tags.update(line_tags)
+                merged_tags.pop("batch", None)
+                merged_tags.pop("+draft/multiline-concat", None)
+
+                # Rebuild out tuple as a single PRIVMSG/NOTICE.
+                first_out[2] = cmd
+                first_out[7] = [batch_target, combined]
+                first_out[8] = combined
+                first_out[9] = merged_tags
+                out = first_out
+
+                # Refresh locals used below.
+                command = out[2]
+                paraml = out[7]
+                tags = out[9]
+                nick = out[4]
+
     # --- IRCv3 echo-message ---
     # If we negotiated echo-message, the server will send our own PRIVMSG/NOTICE
     # back to us. Treating those as inbound messages causes double-processing
@@ -258,6 +319,30 @@ def main(conn, out):
         and "echo-message" in getattr(conn, "enabled_caps", set())
     ):
         return
+
+    # Buffer PRIVMSG/NOTICE lines that belong to an in-progress multiline batch.
+    if command in {"PRIVMSG", "NOTICE"} and isinstance(tags, dict):
+        batch_id = tags.get("batch")
+        if batch_id and batch_id in getattr(conn, "_multiline_batches", {}):
+            mb = conn._multiline_batches[batch_id]
+            if not mb.get("cmd"):
+                mb["cmd"] = command
+            if mb.get("cmd") != command:
+                # Invalid multiline batch (mixing PRIVMSG/NOTICE). Stop buffering.
+                conn._multiline_batches.pop(batch_id, None)
+            else:
+                # Ensure the target matches the batch target.
+                batch_target = mb.get("target")
+                msg_target = paraml[0] if paraml else None
+                if batch_target and msg_target and batch_target != msg_target:
+                    conn._multiline_batches.pop(batch_id, None)
+                else:
+                    if mb.get("first_out") is None:
+                        mb["first_out"] = out
+                        mb["line_tags"] = tags
+                    concat = "draft/multiline-concat" in tags
+                    mb["lines"].append((out[8], bool(concat)))
+                    return
 
     def _should_ignore_chathistory_target(target: str) -> bool:
         target_l = (target or "").lower()

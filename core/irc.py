@@ -198,12 +198,16 @@ class crlf_tcp:
 
     def send_loop(self) -> None:
         while True:
-            line = self.oqueue.get().splitlines()[0][:500]
-            log.debug(">>> %s", line)
-            self.obuffer += line.encode("utf-8", "replace") + b"\r\n"
-            while self.obuffer:
-                sent = self.socket.send(self.obuffer)
-                self.obuffer = self.obuffer[sent:]
+            payload = self.oqueue.get()
+            for line in payload.splitlines() or [""]:
+                if not line:
+                    continue
+                line = line[:500]
+                log.debug(">>> %s", line)
+                self.obuffer += line.encode("utf-8", "replace") + b"\r\n"
+                while self.obuffer:
+                    sent = self.socket.send(self.obuffer)
+                    self.obuffer = self.obuffer[sent:]
 
 
 class crlf_ssl_tcp(crlf_tcp):
@@ -298,6 +302,8 @@ class IRC:
         self.enabled_caps: set[str] = set()
         self._cap_pending: set[str] = set()
         self._cap_available: set[str] = set()
+        # Capability values advertised via CAP LS (e.g. sasl=PLAIN, draft/multiline=max-bytes=...).
+        self.cap_values: dict[str, str] = {}
         self._cap_end_sent = False
 
         self.out: "queue.Queue[list[Any]]" = queue.Queue()  # responses from the server are placed here
@@ -402,6 +408,8 @@ class IRC:
                 "userhost-in-names",
                 "standard-replies",
                 "extended-monitor",
+                # Work-in-progress IRCv3 multiline messages.
+                "draft/multiline",
                 # Some networks use draft names for message IDs.
                 "msgid",
                 "draft/msgid",
@@ -435,15 +443,27 @@ class IRC:
         if not self.requested_caps or len(paramlist) < 2:
             return
 
+        def _cap_name(token: str) -> str:
+            return token.split("=", 1)[0] if token else token
+
+        def _cap_value(token: str) -> Optional[str]:
+            return token.split("=", 1)[1] if token and "=" in token else None
+
         subcmd = paramlist[1].upper()
         caps_blob = paramlist[-1] if paramlist else ""
-        caps = set(caps_blob.split()) if caps_blob else set()
+        raw_caps = caps_blob.split() if caps_blob else []
+        caps = {_cap_name(tok) for tok in raw_caps}
 
         # CAP LS can be multi-line with '*' continuation.
         has_more = "*" in paramlist[2:-1]
 
         if subcmd == "LS":
             self._cap_available |= caps
+            for tok in raw_caps:
+                name = _cap_name(tok)
+                value = _cap_value(tok)
+                if value is not None:
+                    self.cap_values[name] = value
             if has_more:
                 return
 
@@ -466,6 +486,90 @@ class IRC:
                 self.cmd("CAP", ["END"])
                 self._cap_end_sent = True
             return
+
+    def _multiline_cap_kv(self) -> dict[str, str]:
+        """Parse key/value tokens from the draft/multiline CAP value."""
+        raw = self.cap_values.get("draft/multiline")
+        if not raw:
+            return {}
+        out: dict[str, str] = {}
+        for token in raw.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            if "=" in token:
+                k, v = token.split("=", 1)
+                out[k] = v
+            else:
+                out[token] = ""
+        return out
+
+    def _split_utf8_max_bytes(self, text: str, max_bytes: int) -> list[str]:
+        if max_bytes <= 0:
+            return [text]
+
+        parts: list[str] = []
+        cur: list[str] = []
+        cur_bytes = 0
+        for ch in text:
+            b = ch.encode("utf-8")
+            if cur and cur_bytes + len(b) > max_bytes:
+                parts.append("".join(cur))
+                cur = [ch]
+                cur_bytes = len(b)
+            else:
+                cur.append(ch)
+                cur_bytes += len(b)
+        if cur or not parts:
+            parts.append("".join(cur))
+        return parts
+
+    def msg_multiline(self, target: str, text: str) -> None:
+        """Send a multiline PRIVMSG using IRCv3 draft/multiline when enabled."""
+        if "draft/multiline" not in self.enabled_caps or "batch" not in self.enabled_caps:
+            # Fallback: send each line separately.
+            for line in text.split("\n"):
+                self.cmd("PRIVMSG", [target, line])
+            return
+
+        # Conservative per-protocol-line payload limit.
+        max_line_bytes = 350
+
+        kv = self._multiline_cap_kv()
+        max_lines = None
+        try:
+            if kv.get("max-lines"):
+                max_lines = int(kv["max-lines"])
+        except ValueError:
+            max_lines = None
+
+        logical_lines = text.split("\n")
+        if all(line == "" for line in logical_lines):
+            # Avoid sending an entirely blank multiline batch.
+            self.cmd("PRIVMSG", [target, ""])  # server-specific behavior
+            return
+
+        # Build (line, concat_with_previous) tuples.
+        segments: list[tuple[str, bool]] = []
+        for logical in logical_lines:
+            chunks = self._split_utf8_max_bytes(logical, max_line_bytes)
+            for i, chunk in enumerate(chunks):
+                segments.append((chunk, i > 0))
+
+        if max_lines is not None and len(segments) > max_lines:
+            # Fallback: too many lines for the server-advertised limit.
+            for line in logical_lines:
+                self.cmd("PRIVMSG", [target, line])
+            return
+
+        batch_id = f"skybot-ml-{int(time.time() * 1000):x}"
+        self.cmd("BATCH", [f"+{batch_id}", "draft/multiline", target])
+        for line, concat in segments:
+            tags: dict[str, Optional[str]] = {"batch": batch_id}
+            if concat and line != "":
+                tags["draft/multiline-concat"] = None
+            self.cmdv3("PRIVMSG", [target, line], tags=tags)
+        self.cmd("BATCH", [f"-{batch_id}"])
 
     def parse_loop(self) -> None:
         while True:
@@ -576,6 +680,9 @@ class IRC:
             self.cmd("JOIN", zip_channels(self.channels))
 
     def msg(self, target: str, text: str) -> None:
+        if "\n" in text:
+            self.msg_multiline(target, text)
+            return
         self.cmd("PRIVMSG", [target, text])
 
     def setname(self, realname: str) -> None:
