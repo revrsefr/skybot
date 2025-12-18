@@ -8,6 +8,88 @@ from util import hook
 from util.badness import badness
 from util import crowdcontrol_db
 
+
+# --- WHOX user info helper (command: .user info <nick>) ---
+# Uses per-connection in-memory pending state; best-effort and safe to ignore
+# if the server doesn't support WHOX.
+
+
+_USERINFO_DEFAULT_FIELDS = "tcuhsnfar"  # token, chan, user, host, server, nick, flags, account, realname
+_USERINFO_PENDING_TTL = 30.0
+
+
+def _userinfo_get_state(conn):
+    if conn is None:
+        return None
+    if not hasattr(conn, "_crowdcontrol_userinfo"):
+        # token -> dict(reply_to, requester, target, created_m, lines)
+        conn._crowdcontrol_userinfo = {"next_token": 1, "pending": {}}
+    return conn._crowdcontrol_userinfo
+
+
+def _userinfo_next_token(conn):
+    st = _userinfo_get_state(conn)
+    if st is None:
+        return None
+
+    pending = st["pending"]
+    for _ in range(1000):
+        token = int(st.get("next_token", 1)) % 1000
+        st["next_token"] = (token + 1) % 1000
+        if token not in pending:
+            return token
+    return None
+
+
+def _userinfo_cleanup(conn, *, now_m=None):
+    st = _userinfo_get_state(conn)
+    if st is None:
+        return
+    if now_m is None:
+        now_m = time.monotonic()
+    pending = st.get("pending", {})
+    expired = [
+        tok
+        for tok, req in pending.items()
+        if (now_m - float(req.get("created_m", now_m))) > _USERINFO_PENDING_TTL
+    ]
+    for tok in expired:
+        pending.pop(tok, None)
+
+
+def _userinfo_send_reply(conn, reply_to: str, requester: str, text: str) -> None:
+    if conn is None or not reply_to:
+        return
+    try:
+        if requester and reply_to.lower() != requester.lower():
+            conn.msg(reply_to, f"{requester}: {text}")
+        else:
+            conn.msg(reply_to, text)
+    except Exception:
+        return
+
+
+def _userinfo_format_line(line: dict) -> str:
+    nick = (line.get("nick") or "?").strip()
+    user = (line.get("user") or "?").strip()
+    host = (line.get("host") or "?").strip()
+    server = (line.get("server") or "?").strip()
+    flags = (line.get("flags") or "").strip()
+    account = (line.get("account") or "").strip()
+    realname = (line.get("realname") or "").strip()
+    chan = (line.get("chan") or "").strip()
+
+    parts = [f"{nick} ({user}@{host})", f"server={server}"]
+    if account and account not in ("0", "*", "-"):
+        parts.append(f"account={account}")
+    if flags:
+        parts.append(f"flags={flags}")
+    if chan and chan not in ("0", "*", "-"):
+        parts.append(f"chan={chan}")
+    if realname:
+        parts.append(f"realname={realname}")
+    return " | ".join(parts)
+
 # Use "crowdcontrol" array in config
 # syntax
 # rule:
@@ -456,3 +538,142 @@ def crowdcontrol_unban_sweeper(
             db.rollback()
         except Exception:
             pass
+
+
+@hook.command("user")
+def userinfo(inp, conn=None, chan="", nick=""):
+    """ .user info <nick> -- fetch WHOX details for a nick """
+
+    text = (inp or "").strip()
+    if not text:
+        return "usage: .user info <nick>"
+
+    parts = text.split()
+    sub = parts[0].lower()
+    if sub not in ("info", "who", "whox"):
+        return "usage: .user info <nick>"
+    if len(parts) < 2:
+        return "usage: .user info <nick>"
+
+    target = parts[1].strip()
+    if not target:
+        return "usage: .user info <nick>"
+    if conn is None:
+        return "error: no connection"
+
+    # Clean old requests so token allocation stays stable.
+    _userinfo_cleanup(conn)
+
+    if not getattr(conn, "supports_whox", lambda: False)():
+        return "error: server does not advertise WHOX"
+
+    token = _userinfo_next_token(conn)
+    if token is None:
+        return "error: too many pending WHOX requests"
+
+    st = _userinfo_get_state(conn)
+    st["pending"][int(token)] = {
+        "reply_to": chan,
+        "requester": nick,
+        "target": target,
+        "created_m": time.monotonic(),
+        "lines": [],
+    }
+
+    try:
+        # Ask for token first so parsing is deterministic.
+        conn.who(target, fields=_USERINFO_DEFAULT_FIELDS, token=int(token))
+    except Exception:
+        st["pending"].pop(int(token), None)
+        return "error: WHOX request failed"
+
+
+@hook.event("354")
+def userinfo_whox_reply(paraml, conn=None):
+    # Expected WHOX (fields tcuhsnfar):
+    # 354 <me> <token> <chan> <user> <host> <server> <nick> <flags> <account> :<realname>
+    if conn is None or not paraml or len(paraml) < 3:
+        return
+
+    st = _userinfo_get_state(conn)
+    if st is None:
+        return
+    pending = st.get("pending", {})
+
+    try:
+        token_s = str(paraml[1])
+        if not token_s.isdigit():
+            return
+        token = int(token_s)
+    except Exception:
+        return
+
+    req = pending.get(token)
+    if not req:
+        return
+
+    # Parse as best-effort; tolerate missing fields.
+    rest = list(paraml[2:])
+    # The trailing realname is already de-":"'d by core parsing.
+    while len(rest) < 8:
+        rest.append("")
+    chan, user, host, server, nick, flags, account = rest[:7]
+    realname = rest[7] if len(rest) >= 8 else ""
+    if len(rest) > 8:
+        # Some servers may split realname/extra; re-join.
+        realname = " ".join([r for r in rest[7:] if r is not None])
+
+    req["lines"].append(
+        {
+            "token": token,
+            "chan": chan,
+            "user": user,
+            "host": host,
+            "server": server,
+            "nick": nick,
+            "flags": flags,
+            "account": account,
+            "realname": realname,
+        }
+    )
+
+
+@hook.event("315")
+def userinfo_endofwho(paraml, conn=None):
+    # 315 <me> <mask> :End of WHO list.
+    if conn is None or not paraml or len(paraml) < 2:
+        return
+
+    st = _userinfo_get_state(conn)
+    if st is None:
+        return
+
+    now_m = time.monotonic()
+    _userinfo_cleanup(conn, now_m=now_m)
+
+    mask = str(paraml[1] or "").strip()
+    if not mask:
+        return
+
+    pending = st.get("pending", {})
+    # Flush any pending requests for this mask (typically just one).
+    matches = [
+        (tok, req)
+        for tok, req in list(pending.items())
+        if str(req.get("target", "")).lower() == mask.lower()
+    ]
+    for tok, req in matches:
+        reply_to = req.get("reply_to") or ""
+        requester = req.get("requester") or ""
+        lines = req.get("lines") or []
+
+        if not lines:
+            _userinfo_send_reply(conn, reply_to, requester, f"no WHOX results for {mask}")
+        else:
+            # Usually one line for a nick; if multiple, show up to a few.
+            for line in lines[:3]:
+                _userinfo_send_reply(conn, reply_to, requester, _userinfo_format_line(line))
+            if len(lines) > 3:
+                _userinfo_send_reply(conn, reply_to, requester, f"(+{len(lines) - 3} more)")
+
+        pending.pop(tok, None)
