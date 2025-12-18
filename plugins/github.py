@@ -20,6 +20,27 @@ _last_rate_limit_warn = {}
 _poll_interval_hint_by_conn = {}
 
 
+def _ignored_event_types(bot):
+    """Return a set of GitHub Events API `type` strings to ignore."""
+
+    cfg = (getattr(bot, "config", None) or {}).get("github", {})
+    ignored = cfg.get("ignore_event_types")
+    if ignored is None:
+        # Default: reduce noise. Forks and stars are very high volume.
+        ignored = ["WatchEvent", "ForkEvent"]
+    if isinstance(ignored, str):
+        ignored = [ignored]
+    try:
+        return {str(x) for x in (ignored or []) if x}
+    except Exception:
+        return {"WatchEvent", "ForkEvent"}
+
+
+def _is_ignored_event(event, bot):
+    etype = (event or {}).get("type")
+    return etype in _ignored_event_types(bot)
+
+
 def _now():
     return int(time.time())
 
@@ -610,16 +631,25 @@ def ghevent(inp, bot=None, input=None):
     if not events:
         return "no recent events"
 
+    # Skip noisy/ignored event types (e.g. WatchEvent/ForkEvent).
+    show_event = None
+    for ev in events:
+        if not _is_ignored_event(ev, bot):
+            show_event = ev
+            break
+    if show_event is None:
+        return "no recent events"
+
     # If invoked from a command context, emit the same multi-line output we use
     # for channel announcements (header + optional commit lines).
     # Returning strings with newlines won't work: core will only send the first
     # line (see send_loop splitlines()[0]).
     if input is not None:
-        for line in format_event_lines(events[0], token=token):
+        for line in format_event_lines(show_event, token=token):
             input.reply(_safe_one_line(line))
         return None
 
-    return format_event(events[0], token=token)
+    return format_event(show_event, token=token)
 
 
 def _git_watch_list(rest, chan="", db=None):
@@ -702,6 +732,7 @@ def git(inp, chan="", db=None, bot=None, nick="", input=None):
     Notes:
       - Set token in config.json: api_keys.github
       - Poll interval: github.poll_interval (seconds)
+            - Ignore noisy event types: github.ignore_event_types (default: ["WatchEvent", "ForkEvent"])
     """
 
     parts = (inp or "").split(None, 1)
@@ -851,6 +882,8 @@ def github_poll(inp, conn=None, db=None, bot=None):
             new_events = new_events[-MAX_EVENTS_PER_POLL:]
 
         for ev in new_events:
+            if _is_ignored_event(ev, bot):
+                continue
             for line in format_event_lines(ev, token=token):
                 _post_announcement(conn, chan, bot, line)
 
