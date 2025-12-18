@@ -48,6 +48,7 @@ Skybot supports a small but useful subset of IRCv3:
 * `labeled-response` — lets clients label commands and correlate server responses via `@label=...`
 * `server-time` — enables a `time` tag on servers that support it
 * `echo-message` — server echoes your own PRIVMSG/NOTICE back to you (useful for message tags like `msgid`/`time` on your own messages)
+* `setname` — allows changing realname on an active connection via `SETNAME`
 * `account-tag` — enables an `account` tag on servers that support it
 * `account-notify` — sends `ACCOUNT` messages when a user's account status changes
 * `chghost` — sends `CHGHOST` messages when a user's user/host changes
@@ -72,7 +73,7 @@ Related (non-CAP) extensions:
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `echo-message`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `inspircd.org/stats-tags`, `multi-prefix`, `userhost-in-names`, `standard-replies`, and `extended-monitor`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `echo-message`, `setname`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `inspircd.org/stats-tags`, `multi-prefix`, `userhost-in-names`, `standard-replies`, and `extended-monitor`.
 
 Note: When `echo-message` is enabled, Skybot ignores its own echoed `PRIVMSG`/`NOTICE` lines to prevent double-processing (e.g., command loops when the bot speaks with its own prefix).
 

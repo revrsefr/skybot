@@ -390,6 +390,7 @@ class IRC:
                 "labeled-response",
                 "server-time",
                 "echo-message",
+                "setname",
                 "account-tag",
                 "account-notify",
                 "chghost",
@@ -575,6 +576,15 @@ class IRC:
 
     def msg(self, target: str, text: str) -> None:
         self.cmd("PRIVMSG", [target, text])
+
+    def setname(self, realname: str) -> None:
+        """Change this connection's realname (IRCv3 setname).
+
+        Servers SHOULD accept SETNAME even if the capability is not negotiated,
+        but if setname *is* negotiated the change is only confirmed when the
+        server sends back a SETNAME message.
+        """
+        self.cmd("SETNAME", [realname])
 
     # --- IRCv3 chat history helpers ---
     # These simply send CHATHISTORY requests. Servers reply using BATCH and
