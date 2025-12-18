@@ -17,6 +17,7 @@ _repo_re = re.compile(r"^(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)$")
 _last_poll_by_conn = {}
 _poll_cursor_by_conn = {}
 _last_rate_limit_warn = {}
+_poll_interval_hint_by_conn = {}
 
 
 def _now():
@@ -68,14 +69,37 @@ def _github_get_json(url, token=None, etag=None):
         resp = http.open(url, headers=_github_headers(token=token, etag=etag))
         body = resp.read().decode("utf-8", "replace")
         new_etag = None
+        poll_interval = None
         try:
             new_etag = resp.headers.get("ETag")
         except Exception:
             pass
-        return json.loads(body), new_etag
+        try:
+            poll_interval = resp.headers.get("X-Poll-Interval")
+        except Exception:
+            poll_interval = None
+        try:
+            poll_interval = int(poll_interval) if poll_interval is not None else None
+        except Exception:
+            poll_interval = None
+        return json.loads(body), new_etag, poll_interval
     except http.HTTPError as e:
         if getattr(e, "code", None) == 304:
-            return None, etag
+            new_etag = None
+            poll_interval = None
+            try:
+                new_etag = e.headers.get("ETag")
+            except Exception:
+                pass
+            try:
+                poll_interval = e.headers.get("X-Poll-Interval")
+            except Exception:
+                poll_interval = None
+            try:
+                poll_interval = int(poll_interval) if poll_interval is not None else None
+            except Exception:
+                poll_interval = None
+            return None, (new_etag or etag), poll_interval
         raise
 
 
@@ -97,7 +121,7 @@ def _compare_stats(repo_full, before, head, token=None):
     if not (repo_full and before and head):
         return None
     url = f"{API_BASE}/repos/{repo_full}/compare/{before}...{head}"
-    data, _ = _github_get_json(url, token=token)
+    data, _, _ = _github_get_json(url, token=token)
     if not data:
         return None
     files = data.get("files") or []
@@ -160,7 +184,7 @@ def _compare_commits(repo_full, before, head, token=None):
     if not (repo_full and before and head):
         return []
     url = f"{API_BASE}/repos/{repo_full}/compare/{before}...{head}"
-    data, _ = _github_get_json(url, token=token)
+    data, _, _ = _github_get_json(url, token=token)
     if not data:
         return []
 
@@ -497,6 +521,9 @@ def _poll_due(conn, bot):
     now = time.time()
     last = _last_poll_by_conn.get(key, 0)
     interval = _poll_interval(bot)
+    hint = _poll_interval_hint_by_conn.get(key)
+    if isinstance(hint, int) and hint > 0:
+        interval = max(interval, hint)
     if now - last < interval:
         return False
     _last_poll_by_conn[key] = now
@@ -538,7 +565,7 @@ def ghevent(inp, bot=None, input=None):
     token = _github_token(bot)
 
     try:
-        events, _ = _fetch_repo_events(repo, token=token)
+        events, _, _ = _fetch_repo_events(repo, token=token)
     except http.HTTPError as e:
         code = getattr(e, "code", None)
         if code == 403:
@@ -708,7 +735,18 @@ def github_poll(inp, conn=None, db=None, bot=None):
 
     for chan, repo, last_id, etag in watches:
         try:
-            events, new_etag = _fetch_repo_events(repo, token=token, etag=etag)
+            events, new_etag, poll_interval = _fetch_repo_events(
+                repo, token=token, etag=etag
+            )
+            if poll_interval:
+                key = (
+                    id(conn),
+                    getattr(conn, "server_host", None),
+                    getattr(conn, "nick", None),
+                )
+                prev = _poll_interval_hint_by_conn.get(key)
+                if not isinstance(prev, int) or poll_interval > prev:
+                    _poll_interval_hint_by_conn[key] = poll_interval
         except http.HTTPError as e:
             # Avoid spamming the channel on API errors, but do give a periodic
             # hint when we're rate-limited (otherwise it looks like watches are
