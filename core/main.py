@@ -340,7 +340,7 @@ def main(conn, out):
                     if mb.get("first_out") is None:
                         mb["first_out"] = out
                         mb["line_tags"] = tags
-                    concat = "draft/multiline-concat" in tags
+                    concat = "+draft/multiline-concat" in tags
                     mb["lines"].append((out[8], bool(concat)))
                     return
 

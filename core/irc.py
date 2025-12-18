@@ -409,10 +409,10 @@ class IRC:
                 "standard-replies",
                 "extended-monitor",
                 # Work-in-progress IRCv3 multiline messages.
-                "draft/multiline",
+                "+draft/multiline",
                 # Some networks use draft names for message IDs.
                 "msgid",
-                "draft/msgid",
+                "+draft/msgid",
             ]
         self.requested_caps = set(caps)
 
