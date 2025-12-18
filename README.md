@@ -47,6 +47,7 @@ Skybot supports a small but useful subset of IRCv3:
 * `cap-notify` — server can notify clients about new/removed capabilities
 * `labeled-response` — lets clients label commands and correlate server responses via `@label=...`
 * `server-time` — enables a `time` tag on servers that support it
+* `echo-message` — server echoes your own PRIVMSG/NOTICE back to you (useful for message tags like `msgid`/`time` on your own messages)
 * `account-tag` — enables an `account` tag on servers that support it
 * `account-notify` — sends `ACCOUNT` messages when a user's account status changes
 * `chghost` — sends `CHGHOST` messages when a user's user/host changes
@@ -71,7 +72,9 @@ Related (non-CAP) extensions:
 
 IRCv3 capability configuration is per-connection (inside the `connections` object).
 
-Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `inspircd.org/stats-tags`, `multi-prefix`, `userhost-in-names`, `standard-replies`, and `extended-monitor`.
+Default behavior: Skybot requests `message-tags`, `batch`, `cap-notify`, `labeled-response`, `server-time`, `echo-message`, `account-tag`, `account-notify`, `chghost`, `extended-join`, `invite-notify`, `inspircd.org/stats-tags`, `multi-prefix`, `userhost-in-names`, `standard-replies`, and `extended-monitor`.
+
+Note: When `echo-message` is enabled, Skybot ignores its own echoed `PRIVMSG`/`NOTICE` lines to prevent double-processing (e.g., command loops when the bot speaks with its own prefix).
 
 Note: `chathistory` / `draft/chathistory` is supported by Skybot but is intentionally **opt-in** (some servers may auto-send history on join when the capability is enabled). Add it to `ircv3.caps` only if you want it.
 
@@ -90,7 +93,7 @@ To override the requested capabilities:
         "server": "irc.example.net",
         "nick": "Skybot",
         "ircv3": {
-          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "inspircd.org/stats-tags", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "msgid", "draft/msgid"]
+          "caps": ["message-tags", "batch", "cap-notify", "labeled-response", "server-time", "echo-message", "account-tag", "account-notify", "chghost", "extended-join", "invite-notify", "inspircd.org/stats-tags", "multi-prefix", "userhost-in-names", "standard-replies", "extended-monitor", "msgid", "draft/msgid"]
         }
       }
     }

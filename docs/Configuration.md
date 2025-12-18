@@ -47,6 +47,41 @@ Optional:
 * ignore_cert: defaults to `false`. Set to `true` to disable validation of certificates
   from servers - thus weakening the security of your connection.
 
+### IRCv3 capabilities (CAP) ###
+
+Skybot can negotiate IRCv3 capabilities during connection registration.
+
+Per connection you can override the capability list using either:
+
+* `ircv3.caps` (preferred)
+* `caps` (legacy compatibility)
+
+Example:
+
+```json
+{
+  "connections": {
+    "my network": {
+      "server": "irc.example.org",
+      "nick": "skybot",
+      "channels": ["#test"],
+      "ircv3": {
+        "caps": [
+          "message-tags",
+          "server-time",
+          "echo-message"
+        ]
+      }
+    }
+  }
+}
+```
+
+Notes:
+
+* `echo-message` makes the server echo your own `PRIVMSG`/`NOTICE` back to you.
+  Skybot ignores its own echoed messages to avoid double-processing.
+
 
 ## Examples ##
 
