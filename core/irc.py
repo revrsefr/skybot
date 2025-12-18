@@ -388,6 +388,7 @@ class IRC:
                 "batch",
                 "cap-notify",
                 "labeled-response",
+                "away-notify",
                 "server-time",
                 "echo-message",
                 "setname",
