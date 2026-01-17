@@ -12,20 +12,6 @@ MAX_COMMITS_PER_PUSH = 3
 MAX_REPOS_PER_POLL_NO_TOKEN = 4
 RATE_LIMIT_WARN_COOLDOWN = 3600
 
-# IRC formatting controls (mIRC-style)
-IRC_COLOR = "\x03"
-IRC_RESET = "\x0f"
-IRC_UNDERLINE = "\x1f"
-
-DEFAULT_IRC_COLORS = {
-    # Matches the examples in the request.
-    "repo": "02",
-    "actor": "07",
-    "sha": "03",
-    "ref": "03",
-    "url": "22",
-}
-
 _repo_re = re.compile(r"^(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)$")
 
 _last_poll_by_conn = {}
@@ -48,72 +34,6 @@ def _ignored_event_types(bot):
         return {str(x) for x in (ignored or []) if x}
     except Exception:
         return {"WatchEvent", "ForkEvent"}
-
-
-def _github_color_config(bot):
-    cfg = (getattr(bot, "config", None) or {}).get("github", {})
-    colorize = cfg.get("colorize")
-    if colorize is None:
-        colorize = True
-    try:
-        colorize = bool(colorize)
-    except Exception:
-        colorize = True
-
-    colors = dict(DEFAULT_IRC_COLORS)
-    custom = cfg.get("colors") or {}
-    if isinstance(custom, dict):
-        for k, v in custom.items():
-            if v is None:
-                continue
-            colors[str(k)] = str(v)
-    return colorize, colors
-
-
-def _irc_colorize(text, color=None, enabled=True):
-    if not enabled:
-        return str(text) if text is not None else ""
-    if text is None:
-        return ""
-    text = str(text)
-    if not text:
-        return ""
-    if not color:
-        return text
-
-    c = str(color).strip()
-    # Normalize to two-digit color codes when possible.
-    try:
-        c_int = int(c)
-        if 0 <= c_int <= 99:
-            c = f"{c_int:02d}"
-    except Exception:
-        pass
-
-    return f"{IRC_COLOR}{c}{text}{IRC_RESET}"
-
-
-def _irc_url(url, color=None, enabled=True, underline=True):
-    if not enabled:
-        return str(url) if url is not None else ""
-    if not url:
-        return ""
-    u = str(url)
-    prefix = ""
-    suffix = IRC_RESET
-    if color:
-        prefix += f"{IRC_COLOR}{str(color).strip()}"
-    if underline:
-        prefix += IRC_UNDERLINE
-        suffix = f"{IRC_UNDERLINE}{IRC_RESET}"
-    return f"{prefix}{u}{suffix}"
-
-
-def _fmt_repo_tag(repo_tag, enabled=True, colors=None):
-    if colors is None:
-        colors = DEFAULT_IRC_COLORS
-    inner = _irc_colorize(repo_tag, colors.get("repo"), enabled=enabled)
-    return f"[{inner}]"
 
 
 def _is_ignored_event(event, bot):
@@ -255,33 +175,26 @@ def _commit_subject(message):
     return subject
 
 
-def _format_commit_lines(repo_tag, actor, commits, total_count=None, *, enabled=True, colors=None):
+def _format_commit_lines(repo_tag, actor, commits, total_count=None):
     if not commits:
         return []
-
-    if colors is None:
-        colors = DEFAULT_IRC_COLORS
-
-    repo_disp = _fmt_repo_tag(repo_tag, enabled=enabled, colors=colors)
-    actor_disp = _irc_colorize(actor, colors.get("actor"), enabled=enabled)
 
     show = commits[-MAX_COMMITS_PER_PUSH:]
     lines = []
     for c in show:
         sha = _short_sha((c or {}).get("sha"))
         subject = _commit_subject((c or {}).get("message"))
-        sha_disp = _irc_colorize(sha, colors.get("sha"), enabled=enabled)
         if sha and subject:
-            lines.append(f"{repo_disp} {actor_disp} {sha_disp} - {subject}")
+            lines.append(f"[{repo_tag}] {actor} {sha} - {subject}")
         elif sha:
-            lines.append(f"{repo_disp} {actor_disp} {sha_disp}")
+            lines.append(f"[{repo_tag}] {actor} {sha}")
         elif subject:
-            lines.append(f"{repo_disp} {actor_disp} - {subject}")
+            lines.append(f"[{repo_tag}] {actor} - {subject}")
 
     if isinstance(total_count, int) and total_count > len(show):
         more = total_count - len(show)
         if more > 0:
-            lines.append(f"{repo_disp} (+{more} more commits)")
+            lines.append(f"[{repo_tag}] (+{more} more commits)")
 
     return lines
 
@@ -361,18 +274,13 @@ def _issue_html_url(repo_full, number):
     return f"https://github.com/{repo_full}/issues/{n}"
 
 
-def format_event(event, token=None, bot=None):
+def format_event(event, token=None):
     """Format a GitHub Events API item into a short IRC-friendly line."""
 
     etype = event.get("type")
     actor = (event.get("actor") or {}).get("login") or "someone"
     repo = (event.get("repo") or {}).get("name") or "unknown/repo"
     payload = event.get("payload") or {}
-
-    colorize, colors = _github_color_config(bot)
-    repo_tag = _repo_short(repo)
-    repo_disp = _fmt_repo_tag(repo_tag, enabled=colorize, colors=colors)
-    actor_disp = _irc_colorize(actor, colors.get("actor"), enabled=colorize)
 
     if etype == "PushEvent":
         ref = (payload.get("ref") or "").replace("refs/heads/", "")
@@ -382,6 +290,7 @@ def format_event(event, token=None, bot=None):
         before = payload.get("before")
         verb = "pushed"
         count = size if isinstance(size, int) else len(commits)
+        repo_tag = _repo_short(repo)
 
         compare_base = before
         compare_head = head
@@ -433,12 +342,9 @@ def format_event(event, token=None, bot=None):
 
         compare = _compare_url(repo, compare_base, compare_head)
 
-        sha_disp = _irc_colorize(_short_sha(head), colors.get("sha"), enabled=colorize)
-        ref_disp = _irc_colorize(ref, colors.get("ref"), enabled=colorize)
-
-        bits = [f"{repo_disp} {actor_disp} {verb} {count} commit(s)"]
+        bits = [f"[{repo_tag}] {actor} {verb} {count} commit(s)"]
         if ref:
-            bits.append(f"to {ref_disp}")
+            bits.append(f"to {ref}")
         else:
             bits.append(f"to {repo_tag}")
 
@@ -447,9 +353,9 @@ def format_event(event, token=None, bot=None):
             bits.append(f"[+{additions}/-{deletions}/\u00b1{files_changed}]")
 
         if compare:
-            bits.append(_irc_url(compare, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(compare)
         elif head:
-            bits.append(sha_disp)
+            bits.append(_short_sha(head))
 
         return " ".join(bits)
 
@@ -459,14 +365,14 @@ def format_event(event, token=None, bot=None):
         number = pr.get("number") or payload.get("number")
         title = (pr.get("title") or "").strip()
         url = pr.get("html_url") or _pr_html_url(repo, number)
-        bits = [f"{repo_disp} {actor_disp} {action} PR"]
+        bits = [f"[{_repo_short(repo)}] {actor} {action} PR"]
         if number is not None:
             bits[-1] += f" #{number}"
         if title:
             bits.append(f"\"{title}\"")
         bits.append(f"in {repo}")
         if url:
-            bits.append(_irc_url(url, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(url)
         return " ".join(bits)
 
     if etype == "PullRequestReviewEvent":
@@ -483,7 +389,7 @@ def format_event(event, token=None, bot=None):
         state = None
         if isinstance(review, dict):
             state = (review.get("state") or "").lower() or None
-        bits = [f"{repo_disp} {actor_disp} {action} PR review"]
+        bits = [f"[{_repo_short(repo)}] {actor} {action} PR review"]
         if number is not None:
             bits[-1] += f" #{number}"
         if state:
@@ -492,7 +398,7 @@ def format_event(event, token=None, bot=None):
             bits.append(f"\"{title}\"")
         bits.append(f"in {repo}")
         if url:
-            bits.append(_irc_url(url, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(url)
         return " ".join(bits)
 
     if etype == "PullRequestReviewCommentEvent":
@@ -506,14 +412,14 @@ def format_event(event, token=None, bot=None):
         )
         if not url:
             url = _pr_html_url(repo, number)
-        bits = [f"{repo_disp} {actor_disp} {action} on PR review"]
+        bits = [f"[{_repo_short(repo)}] {actor} {action} on PR review"]
         if number is not None:
             bits[-1] += f" #{number}"
         if title:
             bits.append(f"\"{title}\"")
         bits.append(f"in {repo}")
         if url:
-            bits.append(_irc_url(url, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(url)
         return " ".join(bits)
 
     if etype == "IssuesEvent":
@@ -522,14 +428,14 @@ def format_event(event, token=None, bot=None):
         number = issue.get("number")
         title = (issue.get("title") or "").strip()
         url = issue.get("html_url") or _issue_html_url(repo, number)
-        bits = [f"{repo_disp} {actor_disp} {action} issue"]
+        bits = [f"[{_repo_short(repo)}] {actor} {action} issue"]
         if number is not None:
             bits[-1] += f" #{number}"
         if title:
             bits.append(f"\"{title}\"")
         bits.append(f"in {repo}")
         if url:
-            bits.append(_irc_url(url, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(url)
         return " ".join(bits)
 
     if etype == "IssueCommentEvent":
@@ -541,12 +447,12 @@ def format_event(event, token=None, bot=None):
             or issue.get("html_url")
             or _issue_html_url(repo, number)
         )
-        bits = [f"{repo_disp} {actor_disp} {action} on issue"]
+        bits = [f"[{_repo_short(repo)}] {actor} {action} on issue"]
         if number is not None:
             bits[-1] += f" #{number}"
         bits.append(f"in {repo}")
         if url:
-            bits.append(_irc_url(url, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(url)
         return " ".join(bits)
 
     if etype == "ReleaseEvent":
@@ -554,18 +460,18 @@ def format_event(event, token=None, bot=None):
         release = payload.get("release") or {}
         tag = release.get("tag_name")
         url = release.get("html_url")
-        bits = [f"{repo_disp} {actor_disp} {action} release"]
+        bits = [f"[{_repo_short(repo)}] {actor} {action} release"]
         if tag:
             bits[-1] += f" {tag}"
         bits.append(f"in {repo}")
         if url:
-            bits.append(_irc_url(url, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(url)
         return " ".join(bits)
 
     if etype == "CreateEvent":
         ref_type = payload.get("ref_type") or "ref"
         ref = payload.get("ref")
-        bits = [f"{repo_disp} {actor_disp} created {ref_type}"]
+        bits = [f"[{_repo_short(repo)}] {actor} created {ref_type}"]
         if ref:
             bits[-1] += f" {ref}"
         bits.append(f"in {repo}")
@@ -574,7 +480,7 @@ def format_event(event, token=None, bot=None):
     if etype == "DeleteEvent":
         ref_type = payload.get("ref_type") or "ref"
         ref = payload.get("ref")
-        bits = [f"{repo_disp} {actor_disp} deleted {ref_type}"]
+        bits = [f"[{_repo_short(repo)}] {actor} deleted {ref_type}"]
         if ref:
             bits[-1] += f" {ref}"
         bits.append(f"in {repo}")
@@ -584,33 +490,31 @@ def format_event(event, token=None, bot=None):
         forkee = payload.get("forkee") or {}
         full_name = forkee.get("full_name")
         url = forkee.get("html_url")
-        bits = [f"{repo_disp} {actor_disp} forked {repo}"]
+        bits = [f"[{_repo_short(repo)}] {actor} forked {repo}"]
         if full_name:
             bits.append(f"to {full_name}")
         if url:
-            bits.append(_irc_url(url, colors.get("url"), enabled=colorize, underline=True))
+            bits.append(url)
         return " ".join(bits)
 
     if etype == "WatchEvent":
         action = payload.get("action") or "starred"
-        return f"{repo_disp} {actor_disp} {action} {repo}"
+        return f"[{_repo_short(repo)}] {actor} {action} {repo}"
 
     # Fallback
     url = _extract_event_url(payload)
     if url:
-        return f"{repo_disp} {actor_disp} did {etype or 'something'} in {repo} " + _irc_url(
-            url, colors.get("url"), enabled=colorize, underline=True
-        )
-    return f"{repo_disp} {actor_disp} did {etype or 'something'} in {repo}"
+        return f"[{_repo_short(repo)}] {actor} did {etype or 'something'} in {repo} {url}"
+    return f"[{_repo_short(repo)}] {actor} did {etype or 'something'} in {repo}"
 
 
-def format_event_lines(event, token=None, bot=None):
+def format_event_lines(event, token=None):
     """Return one or more IRC-friendly lines for an event.
 
     For PushEvent, includes commit summary lines (short SHA + subject).
     """
 
-    header = format_event(event, token=token, bot=bot)
+    header = format_event(event, token=token)
     lines = [header] if header else []
 
     etype = event.get("type")
@@ -622,20 +526,11 @@ def format_event_lines(event, token=None, bot=None):
     repo_tag = _repo_short(repo)
     payload = event.get("payload") or {}
 
-    colorize, colors = _github_color_config(bot)
-
     size = payload.get("size")
     total = size if isinstance(size, int) else len(payload.get("commits") or [])
 
     commits = payload.get("commits") or []
-    commit_lines = _format_commit_lines(
-        repo_tag,
-        actor,
-        commits,
-        total_count=total,
-        enabled=colorize,
-        colors=colors,
-    )
+    commit_lines = _format_commit_lines(repo_tag, actor, commits, total_count=total)
 
     # Some GitHub Events payloads omit commits; fall back to compare API.
     # Only do this when authenticated to avoid burning the low anonymous quota.
@@ -656,8 +551,6 @@ def format_event_lines(event, token=None, bot=None):
                     actor,
                     cmp_commits,
                     total_count=total,
-                    enabled=colorize,
-                    colors=colors,
                 )
 
     lines.extend(commit_lines)
@@ -756,7 +649,7 @@ def ghevent(inp, bot=None, input=None):
             input.reply(_safe_one_line(line))
         return None
 
-    return format_event(show_event, token=token, bot=bot)
+    return format_event(show_event, token=token)
 
 
 def _git_watch_list(rest, chan="", db=None):
@@ -991,7 +884,7 @@ def github_poll(inp, conn=None, db=None, bot=None):
         for ev in new_events:
             if _is_ignored_event(ev, bot):
                 continue
-            for line in format_event_lines(ev, token=token, bot=bot):
+            for line in format_event_lines(ev, token=token):
                 _post_announcement(conn, chan, bot, line)
 
         if overflow:
