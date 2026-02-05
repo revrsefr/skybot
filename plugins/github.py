@@ -1,6 +1,17 @@
 import json
 import re
 import time
+import hashlib
+import hmac
+import threading
+
+
+try:
+    import flask
+    Flask = flask.Flask
+except Exception:
+    flask = None
+    Flask = None
 
 from util import hook, http
 
@@ -11,6 +22,11 @@ MAX_EVENTS_PER_POLL = 3
 MAX_COMMITS_PER_PUSH = 3
 MAX_REPOS_PER_POLL_NO_TOKEN = 4
 RATE_LIMIT_WARN_COOLDOWN = 3600
+
+DEFAULT_WEBHOOK_HOST = "0.0.0.0"
+DEFAULT_WEBHOOK_PORT = 9001
+DEFAULT_WEBHOOK_PATH = "/github/webhook"
+DEFAULT_WEBHOOK_EVENTS = ["push", "pull_request", "issues"]
 
 # IRC formatting controls (mIRC-style)
 IRC_COLOR = "\x03"
@@ -32,6 +48,8 @@ _last_poll_by_conn = {}
 _poll_cursor_by_conn = {}
 _last_rate_limit_warn = {}
 _poll_interval_hint_by_conn = {}
+
+_webhook_lock = threading.Lock()
 
 
 def _ignored_event_types(bot):
@@ -146,10 +164,261 @@ def _db_init(db):
     db.commit()
 
 
+def _db_init_private(db):
+    db.execute(
+        "create table if not exists github_watches_private ("
+        "chan text not null, "
+        "repo text not null, "
+        "primary key (chan, repo)"
+        ")"
+    )
+    db.commit()
+
+
 def _github_token(bot):
     # Optional: set in config.json under api_keys.github
     bot_keys = (bot.config or {}).get("api_keys", {})
     return bot_keys.get("github")
+
+
+def _webhook_secret(bot):
+    cfg = (getattr(bot, "config", None) or {}).get("github", {})
+    secret = cfg.get("webhook_secret")
+    if secret is None:
+        return None
+    secret = str(secret).strip()
+    return secret or None
+
+
+def _webhook_events(bot):
+    cfg = (getattr(bot, "config", None) or {}).get("github", {})
+    events = cfg.get("webhook_events") or DEFAULT_WEBHOOK_EVENTS
+    if isinstance(events, str):
+        events = [events]
+    try:
+        return {str(x).strip().lower() for x in events if x}
+    except Exception:
+        return set(DEFAULT_WEBHOOK_EVENTS)
+
+
+def _webhook_listen_config(bot):
+    cfg = (getattr(bot, "config", None) or {}).get("github", {})
+    host = cfg.get("webhook_host", DEFAULT_WEBHOOK_HOST)
+    port = cfg.get("webhook_port", DEFAULT_WEBHOOK_PORT)
+    path = cfg.get("webhook_path", DEFAULT_WEBHOOK_PATH)
+    enabled = cfg.get("webhook_enabled")
+    if enabled is None:
+        enabled = True
+    try:
+        enabled = bool(enabled)
+    except Exception:
+        enabled = True
+    try:
+        port = int(port)
+    except Exception:
+        port = DEFAULT_WEBHOOK_PORT
+    path = "/" + str(path).lstrip("/") if path else DEFAULT_WEBHOOK_PATH
+    return enabled, str(host), port, path
+
+
+def _verify_webhook_signature(secret, payload, signature_header):
+    if not secret or not signature_header:
+        return False
+    sig = str(signature_header)
+    if not sig.startswith("sha256="):
+        return False
+    given = sig.split("=", 1)[1]
+    mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(given, mac)
+
+
+def _webhook_payload(request_obj):
+    data = None
+    try:
+        data = request_obj.get_json(silent=True)
+    except Exception:
+        data = None
+    if data is None:
+        try:
+            raw = request_obj.form.get("payload")
+        except Exception:
+            raw = None
+        if raw:
+            try:
+                data = json.loads(raw)
+            except Exception:
+                data = None
+    return data
+
+
+def _webhook_event_to_event(event_name, payload):
+    repo = ((payload or {}).get("repository") or {}).get("full_name")
+    sender = ((payload or {}).get("sender") or {}).get("login")
+    if not repo:
+        return None
+
+    if event_name == "push":
+        commits = payload.get("commits") or []
+        event_commits = []
+        for c in commits:
+            sha = (c or {}).get("id")
+            msg = (c or {}).get("message")
+            if sha or msg:
+                event_commits.append({"sha": sha, "message": msg})
+        return {
+            "type": "PushEvent",
+            "actor": {"login": sender or (payload.get("pusher") or {}).get("name")},
+            "repo": {"name": repo},
+            "payload": {
+                "ref": payload.get("ref"),
+                "size": payload.get("size"),
+                "commits": event_commits,
+                "head": payload.get("after"),
+                "before": payload.get("before"),
+            },
+        }
+
+    if event_name == "pull_request":
+        return {
+            "type": "PullRequestEvent",
+            "actor": {"login": sender},
+            "repo": {"name": repo},
+            "payload": {
+                "action": payload.get("action"),
+                "number": payload.get("number"),
+                "pull_request": payload.get("pull_request"),
+            },
+        }
+
+    if event_name == "issues":
+        return {
+            "type": "IssuesEvent",
+            "actor": {"login": sender},
+            "repo": {"name": repo},
+            "payload": {
+                "action": payload.get("action"),
+                "issue": payload.get("issue"),
+            },
+        }
+
+    return None
+
+
+def _webhook_targets(bot, repo_full):
+    targets = []
+    if not bot or not repo_full:
+        return targets
+    for conn in getattr(bot, "conns", {}).values():
+        try:
+            db = bot.get_db_connection(conn)
+        except Exception:
+            continue
+        try:
+            _db_init_private(db)
+            rows = db.execute(
+                "select chan from github_watches_private where repo=? order by chan",
+                (repo_full,),
+            ).fetchall()
+        except Exception:
+            rows = []
+        for row in rows or []:
+            try:
+                chan = row[0]
+            except Exception:
+                continue
+            if chan:
+                targets.append((conn, chan))
+    return targets
+
+
+def _webhook_status(bot):
+    existing = getattr(bot, "_github_webhook_server", None) if bot is not None else None
+    if isinstance(existing, dict):
+        return bool(existing.get("running")), existing.get("error")
+    return False, None
+
+
+def _ensure_webhook_server(bot):
+    if bot is None:
+        return False
+    if Flask is None or flask is None:
+        bot._github_webhook_server = {"running": False, "error": "flask_missing"}
+        return False
+    enabled, host, port, path = _webhook_listen_config(bot)
+    if not enabled:
+        bot._github_webhook_server = {"running": False, "error": "disabled"}
+        return False
+    if not _webhook_secret(bot):
+        bot._github_webhook_server = {"running": False, "error": "missing_secret"}
+        return False
+
+    existing = getattr(bot, "_github_webhook_server", None)
+    if isinstance(existing, dict) and existing.get("running"):
+        return True
+
+    with _webhook_lock:
+        existing = getattr(bot, "_github_webhook_server", None)
+        if isinstance(existing, dict) and existing.get("running"):
+            return True
+
+        app = Flask("skybot_github_webhook")
+
+        @app.post(path)
+        def github_webhook():
+            cfg_bot = bot
+            secret = _webhook_secret(cfg_bot)
+            if not secret:
+                return flask.abort(401)
+
+            signature = flask.request.headers.get("X-Hub-Signature-256")
+            payload_bytes = flask.request.get_data() or b""
+            if not _verify_webhook_signature(secret, payload_bytes, signature):
+                return flask.abort(401)
+
+            event_name = (flask.request.headers.get("X-GitHub-Event") or "").lower()
+            if event_name == "ping":
+                return "ok", 200
+
+            payload = _webhook_payload(flask.request)
+            if payload is None:
+                return flask.abort(400)
+
+            if event_name not in _webhook_events(cfg_bot):
+                return "", 204
+
+            repo_full = ((payload or {}).get("repository") or {}).get("full_name")
+            if not repo_full:
+                return "", 204
+
+            event = _webhook_event_to_event(event_name, payload)
+            if not event:
+                return "", 204
+
+            targets = _webhook_targets(cfg_bot, repo_full)
+            if not targets:
+                return "", 204
+
+            for line in format_event_lines(event, token=None, bot=cfg_bot):
+                for conn, chan in targets:
+                    _post_announcement(conn, chan, cfg_bot, line)
+
+            return "ok", 200
+
+        def _run():
+            app.run(host=host, port=port, threaded=True, use_reloader=False)
+
+        thread = threading.Thread(target=_run, name="github-webhook", daemon=True)
+        bot._github_webhook_server = {
+            "running": True,
+            "thread": thread,
+            "host": host,
+            "port": port,
+            "path": path,
+        }
+        thread.start()
+        return True
+
+    return False
 
 
 def _github_headers(token=None, etag=None):
@@ -760,6 +1029,7 @@ def ghevent(inp, bot=None, input=None):
 
 def _git_watch_list(rest, chan="", db=None):
     _db_init(db)
+    _db_init_private(db)
 
     parts = (rest or "").split()
 
@@ -773,31 +1043,72 @@ def _git_watch_list(rest, chan="", db=None):
     rows = db.execute(
         "select repo from github_watches where chan=? order by repo", (target,)
     ).fetchall()
-    if not rows:
+    private_rows = db.execute(
+        "select repo from github_watches_private where chan=? order by repo", (target,)
+    ).fetchall()
+    if not rows and not private_rows:
         return f"no watches for {target}"
-    return f"watches for {target}: " + ", ".join(r[0] for r in rows)
+    entries = [str(r[0]) for r in rows]
+    entries.extend(f"{r[0]} (private)" for r in private_rows)
+    return f"watches for {target}: " + ", ".join(entries)
 
 
-def _git_watch_add(rest, chan="", db=None):
+def _git_watch_add(rest, chan="", db=None, bot=None):
     _db_init(db)
+    _db_init_private(db)
 
     parts = (rest or "").split()
     if len(parts) < 1:
-        raise ValueError("usage: .git add owner/repo [#channel]")
+        raise ValueError("usage: .git add owner/repo [#channel] [private]")
 
     repo = _normalize_repo(parts[0])
-    target = parts[1] if len(parts) >= 2 and parts[1].startswith("#") else chan
+    target = chan
+    private = False
+    for token in parts[1:]:
+        if token.startswith("#"):
+            target = token
+        elif token.lower() == "private":
+            private = True
     if not (target and target.startswith("#")):
         raise ValueError("please specify a channel (e.g. #mychan)")
 
-    # Avoid confusing duplicates: tell the user if it's already being watched.
+    if private:
+        _ensure_webhook_server(bot)
+        running, err = _webhook_status(bot)
+        exists = db.execute(
+            "select 1 from github_watches_private where chan=? and repo=? limit 1",
+            (target, repo),
+        ).fetchone()
+        if exists:
+            return f"already watching {repo} in {target} (private)"
+        db.execute(
+            "insert or ignore into github_watches_private(chan, repo) values(?,?)",
+            (target, repo),
+        )
+        db.commit()
+        if running:
+            return f"ok, watching {repo} in {target} (private via webhook)"
+        if err == "flask_missing":
+            return (
+                f"ok, watching {repo} in {target} (private via webhook; listener not running: Flask missing)"
+            )
+        if err == "missing_secret":
+            return (
+                f"ok, watching {repo} in {target} (private via webhook; listener not running: github.webhook_secret not set)"
+            )
+        if err == "disabled":
+            return (
+                f"ok, watching {repo} in {target} (private via webhook; listener not running: github.webhook_enabled=false)"
+            )
+        return f"ok, watching {repo} in {target} (private via webhook; listener not running)"
+
+    # Public watch: keep original behavior.
     exists = db.execute(
         "select 1 from github_watches where chan=? and repo=? limit 1",
         (target, repo),
     ).fetchone()
     if exists:
         return f"already watching {repo} in {target}"
-
     db.execute(
         "insert or ignore into github_watches(chan, repo, last_id, etag) values(?,?,NULL,NULL)",
         (target, repo),
@@ -808,6 +1119,7 @@ def _git_watch_add(rest, chan="", db=None):
 
 def _git_watch_remove(rest, chan="", db=None):
     _db_init(db)
+    _db_init_private(db)
 
     parts = (rest or "").split()
     if len(parts) < 1:
@@ -819,8 +1131,11 @@ def _git_watch_remove(rest, chan="", db=None):
         raise ValueError("please specify a channel (e.g. #mychan)")
 
     cur = db.execute("delete from github_watches where chan=? and repo=?", (target, repo))
+    cur_private = db.execute(
+        "delete from github_watches_private where chan=? and repo=?", (target, repo)
+    )
     db.commit()
-    if cur.rowcount:
+    if (getattr(cur, "rowcount", 0) or 0) or (getattr(cur_private, "rowcount", 0) or 0):
         return f"ok, stopped watching {repo} in {target}"
     return f"not watching {repo} in {target}"
 
@@ -831,19 +1146,22 @@ def git(inp, chan="", db=None, bot=None, nick="", input=None):
 
     Usage:
             .git event owner/repo
-            .git add owner/repo [#channel]
+            .git add owner/repo [#channel] [private]
             .git remove owner/repo [#channel]
             .git list [#channel]
 
     Notes:
       - Set token in config.json: api_keys.github
-      - Poll interval: github.poll_interval (seconds)
+        - Poll interval: github.poll_interval (seconds)
             - Ignore noisy event types: github.ignore_event_types (default: ["WatchEvent", "ForkEvent"])
+        - Private repos: .git add owner/repo private + github.webhook_secret
     """
 
     parts = (inp or "").split(None, 1)
     if not parts:
         return None
+
+    _ensure_webhook_server(bot)
 
     sub = parts[0].lower()
     rest = parts[1] if len(parts) > 1 else ""
@@ -853,7 +1171,7 @@ def git(inp, chan="", db=None, bot=None, nick="", input=None):
             return ghevent(rest, bot=bot, input=input)
 
         if sub in ("add", "watch"):
-            return _git_watch_add(rest, chan=chan, db=db)
+            return _git_watch_add(rest, chan=chan, db=db, bot=bot)
 
         if sub in ("remove", "rm", "del", "unwatch"):
             return _git_watch_remove(rest, chan=chan, db=db)
@@ -872,6 +1190,8 @@ def github_poll(inp, conn=None, db=None, bot=None):
     # Poll periodically on incoming server traffic (PINGs, joins, chat, etc.)
     if conn is None or db is None or bot is None:
         return
+
+    _ensure_webhook_server(bot)
 
     if not _poll_due(conn, bot):
         return

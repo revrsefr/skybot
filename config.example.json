@@ -53,5 +53,15 @@
     "github": "CHANGE_ME",
     "pirateweather": "CHANGE_ME",
     "google": "CHANGE_ME"
+  },
+  "github": {
+    "poll_interval": 60,
+    "ignore_event_types": ["WatchEvent", "ForkEvent"],
+    "webhook_secret": "CHANGE_ME",
+    "webhook_enabled": true,
+    "webhook_host": "0.0.0.0",
+    "webhook_port": 9001,
+    "webhook_path": "/github/webhook",
+    "webhook_events": ["push", "pull_request", "issues"]
   }
 }
