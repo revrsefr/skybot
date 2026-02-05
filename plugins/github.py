@@ -4,6 +4,8 @@ import time
 import hashlib
 import hmac
 import threading
+import os
+import inspect
 
 
 try:
@@ -50,6 +52,7 @@ _last_rate_limit_warn = {}
 _poll_interval_hint_by_conn = {}
 
 _webhook_lock = threading.Lock()
+_webhook_html_cache = None
 
 
 def _ignored_event_types(bot):
@@ -338,6 +341,32 @@ def _webhook_status(bot):
     return False, None
 
 
+def _load_webhook_html():
+    global _webhook_html_cache
+    if _webhook_html_cache is not None:
+        return _webhook_html_cache
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    except Exception:
+        src = inspect.getsourcefile(_load_webhook_html)
+        base_dir = os.path.dirname(os.path.abspath(src)) if src else os.getcwd()
+    html_path = os.path.join(base_dir, "github_webhook.html")
+    try:
+        with open(html_path, "r", encoding="utf-8") as fh:
+            _webhook_html_cache = fh.read()
+            return _webhook_html_cache
+    except Exception:
+        _webhook_html_cache = (
+            "<!doctype html>"
+            "<html><head><title>GitHub Webhook</title></head>"
+            "<body>"
+            "<h1>GitHub Webhook Endpoint</h1>"
+            "<p>This URL only accepts signed POST requests from GitHub.</p>"
+            "</body></html>"
+        )
+        return _webhook_html_cache
+
+
 def _ensure_webhook_server(bot):
     if bot is None:
         return False
@@ -403,6 +432,12 @@ def _ensure_webhook_server(bot):
                     _post_announcement(conn, chan, cfg_bot, line)
 
             return "ok", 200
+
+        @app.get(path)
+        def github_webhook_info():
+            # Friendly HTML for browsers hitting the webhook URL directly.
+            html = _load_webhook_html()
+            return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
         def _run():
             app.run(host=host, port=port, threaded=True, use_reloader=False)

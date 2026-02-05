@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Access Restricted - KiwiIRC</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+        
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+        
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(30px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+        
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+    }
+        
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f23;
+      background: linear-gradient(-45deg, #0f0f23, #1a1a2e, #16213e, #0f3460);
+      background-size: 400% 400%;
+      animation: gradientShift 20s ease infinite;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+        
+    body::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: 
+        radial-gradient(circle at 20% 30%, rgba(79, 172, 254, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 80% 70%, rgba(102, 126, 234, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 50% 50%, rgba(240, 147, 251, 0.05) 0%, transparent 60%);
+      pointer-events: none;
+    }
+        
+    body::after {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 50px 50px;
+      opacity: 0.3;
+      pointer-events: none;
+    }
+        
+    .container {
+      background: rgba(26, 26, 46, 0.85);
+      backdrop-filter: blur(20px);
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 
+        0 20px 60px rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      padding: 3.5rem 2.5rem;
+      max-width: 580px;
+      width: 100%;
+      text-align: center;
+      position: relative;
+      animation: fadeInUp 0.6s ease-out;
+      z-index: 1;
+    }
+        
+    .icon-wrapper {
+      width: 90px;
+      height: 90px;
+      margin: 0 auto 2rem;
+      background: linear-gradient(135deg, rgba(79, 172, 254, 0.2) 0%, rgba(102, 126, 234, 0.2) 100%);
+      border: 2px solid rgba(79, 172, 254, 0.3);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 
+        0 10px 40px rgba(79, 172, 254, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      animation: fadeInUp 0.6s ease-out 0.1s both, float 3s ease-in-out infinite;
+    }
+        
+    .icon {
+      font-size: 3rem;
+      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+    }
+        
+    h1 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #4facfe 0%, #667eea 50%, #f5576c 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.8rem;
+      animation: fadeInUp 0.6s ease-out 0.2s both;
+      line-height: 1.2;
+    }
+        
+    .subtitle {
+      font-size: 1.1rem;
+      color: #94a3b8;
+      margin-bottom: 1.2rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+      animation: fadeInUp 0.6s ease-out 0.3s both;
+    }
+        
+    p {
+      font-size: 1rem;
+      line-height: 1.7;
+      color: #cbd5e1;
+      margin-bottom: 2.5rem;
+      animation: fadeInUp 0.6s ease-out 0.4s both;
+      font-weight: 400;
+    }
+        
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+      animation: fadeInUp 0.6s ease-out 0.5s both;
+    }
+        
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      padding: 1.1rem 2rem;
+      background: linear-gradient(135deg, #4facfe 0%, #667eea 100%);
+      color: #ffffff;
+      text-decoration: none;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 1rem;
+      letter-spacing: 0.02em;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 
+        0 4px 20px rgba(79, 172, 254, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+        
+    .btn::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+      transition: left 0.6s;
+    }
+        
+    .btn:hover::before {
+      left: 100%;
+    }
+        
+    .btn:hover {
+      transform: translateY(-3px);
+      box-shadow: 
+        0 8px 30px rgba(79, 172, 254, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+        
+    .btn:active {
+      transform: translateY(-1px);
+    }
+        
+    .btn-secondary {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      box-shadow: 
+        0 4px 20px rgba(240, 147, 251, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+        
+    .btn-secondary:hover {
+      box-shadow: 
+        0 8px 30px rgba(240, 147, 251, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+        
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+      margin: 2.5rem 0 2rem;
+      animation: fadeInUp 0.6s ease-out 0.6s both;
+    }
+        
+    .info {
+      font-size: 0.9rem;
+      color: #64748b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      animation: fadeInUp 0.6s ease-out 0.7s both;
+      font-weight: 500;
+    }
+        
+    .info::before {
+      content: '💡';
+      font-size: 1.1rem;
+    }
+        
+    @media (max-width: 480px) {
+      .container {
+        padding: 2.5rem 1.5rem;
+      }
+            
+      h1 {
+        font-size: 1.8rem;
+      }
+            
+      .subtitle {
+        font-size: 0.8rem;
+      }
+            
+      .icon-wrapper {
+        width: 75px;
+        height: 75px;
+      }
+            
+      .icon {
+        font-size: 2.5rem;
+      }
+            
+      p {
+        font-size: 0.95rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon-wrapper">
+      <div class="icon">🔐</div>
+    </div>
+    <h1>Webhook Endpoint</h1>
+    <p class="subtitle">POST Requests Only</p>
+    <p>This URL only accepts signed webhook <strong>POST</strong> requests from GitHub. If you are seeing this in a browser, it means the endpoint is online and waiting for GitHub.</p>
+        
+    <div class="buttons">
+      <a href="https://puntochat.net/" class="btn">
+        <span>⚙️</span>
+        <span>Home</span>
+      </a>
+      <a href="https://docs.github.com/webhooks" class="btn btn-secondary">
+        <span>📘</span>
+        <span>Webhook Docs</span>
+      </a>
+    </div>
+        
+    <div class="divider"></div>
+        
+    <div class="info">
+      Make sure the webhook secret matches github.webhook_secret
+    </div>
+  </div>
+</body>
+</html>
