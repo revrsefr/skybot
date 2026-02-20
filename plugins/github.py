@@ -979,6 +979,14 @@ def _poll_interval(bot):
     return max(15, interval)
 
 
+def _request_interval(bot):
+    cfg = (getattr(bot, "config", None) or {}).get("github", {})
+    try:
+        return max(0, int(cfg.get("request_interval", 0)))
+    except Exception:
+        return 0
+
+
 def _poll_due(conn, bot):
     key = (id(conn), getattr(conn, "server_host", None), getattr(conn, "nick", None))
     now = time.time()
@@ -1257,7 +1265,10 @@ def github_poll(inp, conn=None, db=None, bot=None):
         _poll_cursor_by_conn[key] = start + MAX_REPOS_PER_POLL_NO_TOKEN
         watches = subset
 
-    for chan, repo, last_id, etag in watches:
+    req_delay = _request_interval(bot)
+    for i, (chan, repo, last_id, etag) in enumerate(watches):
+        if i > 0 and req_delay > 0:
+            time.sleep(req_delay)
         try:
             events, new_etag, poll_interval = _fetch_repo_events(
                 repo, token=token, etag=etag
